@@ -5,7 +5,8 @@
 #include <fcntl.h>
 #include <string.h>
 
-sem_t* acorda_yuri;
+sem_t* sem_prog;
+sem_t* sem_block;
 
 void ler_e_imprimir(const char *filename) {
     FILE *file = fopen(filename, "r");
@@ -70,18 +71,54 @@ int main(){
     pid_t pid = getpid();
     const char *filename = "LNG.txt"; 
     // abrir os dois semaforos fodasticos 
-    sem_t* acorda_yuri = sem_open("/sem_prog", O_CREAT, 0644, 1);
-    sem_t* sem_block = sem_open("/sem_block", O_CREAT, 0644,1);
-    if (acorda_yuri == SEM_FAILED || sem_block == SEM_FAILED){
-        perror("Erro ao abrir semaforo");
+    printf("abrindo os semaforos\n");
+    
+    /*
+    pelo que eu lembro a gente vai usar o sem_prog para acordar o analista entao inicialmente ele vai ta esperando a mensagem para acordar,
+    essa mensagem eh a liberacao do semaforo por parte da thread 1 do atendimento
+    */
+
+    sem_t* sem_prog = sem_open("/sem_prog", O_CREAT, 0644, 1); 
+    /*
+    sem_block eh usado para gerenciar o acesso ao conteudo do arquivo LNG.txt
+    nota: no final das contas ele eh a mesma coisa que o anterior, talvez nao precise do sem_prog, ja que o sem_block so deve ser liberado para o analista
+    quando o atendimento acorda-lo. basicamente os dois sempre so vao ter os bloqueios liberados na mesma hora, o que deixa o segundo meio irrelevante 
+    
+    */
+
+    sem_t* sem_block = sem_open("/sem_block", O_CREAT, 0644,1); 
+
+    if (sem_prog == SEM_FAILED || sem_block == SEM_FAILED){
+        perror("Erro ao abrir semaforo\n");
         return 1;
     }
+        
+        // gambiarra para testar, basicamente para conseguir sempre o acesso dos semaforos 
+        if (sem_trywait(sem_block) == -1 ) {
+            perror("Semáforo sem_block em uso");
+            sem_post(sem_block); // Libera imediatamente
+        } else {
+            printf("Semáforo disponível\n");
+            sem_post(sem_block); // Libera imediatamente
+        }
+
+        if (sem_trywait(sem_prog) == -1 ) {
+            perror("Semáforo sem_prog em uso");
+            sem_post(sem_prog); // Libera imediatamente
+        
+        } else {
+            printf("Semáforo disponível\n");
+            sem_post(sem_prog); // Libera imediatamente
+        }
 
     while (1)
     {
-        printf("Analista esta dormindo");
-        sem_wait(acorda_yuri);
-
+        printf("Analista esta dormindo\n");
+        /*
+        aqui da para sintetizar bem o que eu disse antes, os dois sempre vao aguardar juntos e liberar os semaforos juntos 
+        no fim das contas eles nao tem funcoes diferentes, tendo em vista que sempre serao acordados no mesmo momento pelo atendimento
+        */
+        sem_wait(sem_prog);
         // bloquear arquivo LNG
         sem_wait(sem_block);
                 
@@ -89,8 +126,13 @@ int main(){
         ler_e_imprimir(filename);
         
         // desbloquear LNG
+
         sem_post(sem_block);
+        sem_post(sem_prog);
     }   
-        
+
+    sem_unlink("/sem_prog");
+    sem_unlink("/sem_block");
+    
     return 0;
 }
