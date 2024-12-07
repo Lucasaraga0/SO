@@ -21,6 +21,7 @@ int main()
 
  FILE* demanda = fopen("demanda.txt", "w+");
  fprintf(demanda, "%d", tempo);
+ printf("\n%d\n", tempo);
  fclose(demanda);
 
  raise(SIGSTOP);
