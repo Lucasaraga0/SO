@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <string.h>
+#include <signal.h>
 
 sem_t* sem_prog;
 sem_t* sem_block;
@@ -69,7 +70,10 @@ int main(){
     
     //gera arquivo com pid e dorme
     pid_t pid = getpid();
+    // usar tempfile pq eh mais rapido 
     const char *filename = "LNG.txt"; 
+    raise(SIGSTOP);
+
     // abrir os dois semaforos fodasticos 
     printf("abrindo os semaforos\n");
     
@@ -78,7 +82,6 @@ int main(){
     essa mensagem eh a liberacao do semaforo por parte da thread 1 do atendimento
     */
 
-    sem_t* sem_prog = sem_open("/sem_prog", O_CREAT, 0644, 1); 
     /*
     sem_block eh usado para gerenciar o acesso ao conteudo do arquivo LNG.txt
     nota: no final das contas ele eh a mesma coisa que o anterior, talvez nao precise do sem_prog, ja que o sem_block so deve ser liberado para o analista
@@ -86,9 +89,9 @@ int main(){
     
     */
 
-    sem_t* sem_block = sem_open("/sem_block", O_CREAT, 0644,1); 
+    sem_t* sem_block = sem_open("/sem_block", O_RDWR); 
 
-    if (sem_prog == SEM_FAILED || sem_block == SEM_FAILED){
+    if (sem_block == SEM_FAILED){
         perror("Erro ao abrir semaforo\n");
         return 1;
     }
@@ -102,15 +105,6 @@ int main(){
             sem_post(sem_block); // Libera imediatamente
         }
 
-        if (sem_trywait(sem_prog) == -1 ) {
-            perror("Semáforo sem_prog em uso");
-            sem_post(sem_prog); // Libera imediatamente
-        
-        } else {
-            printf("Semáforo disponível\n");
-            sem_post(sem_prog); // Libera imediatamente
-        }
-
     while (1)
     {
         printf("Analista esta dormindo\n");
@@ -118,7 +112,6 @@ int main(){
         aqui da para sintetizar bem o que eu disse antes, os dois sempre vao aguardar juntos e liberar os semaforos juntos 
         no fim das contas eles nao tem funcoes diferentes, tendo em vista que sempre serao acordados no mesmo momento pelo atendimento
         */
-        sem_wait(sem_prog);
         // bloquear arquivo LNG
         sem_wait(sem_block);
                 
@@ -128,10 +121,8 @@ int main(){
         // desbloquear LNG
 
         sem_post(sem_block);
-        sem_post(sem_prog);
     }   
 
-    sem_unlink("/sem_prog");
     sem_unlink("/sem_block");
     
     return 0;
