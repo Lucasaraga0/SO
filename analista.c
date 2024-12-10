@@ -6,7 +6,6 @@
 #include <string.h>
 #include <signal.h>
 
-sem_t* sem_prog;
 sem_t* sem_block;
 
 void ler_e_imprimir(const char *filename) {
@@ -69,13 +68,18 @@ void ler_e_imprimir(const char *filename) {
 int main(){
     
     //gera arquivo com pid e dorme
+    const char *filename = "/tmp/analista_pid.tmp";
     pid_t pid = getpid();
-    // usar tempfile pq eh mais rapido 
+    FILE *file = fopen(filename, "w");
+    fprintf(file, "%d\n", pid);
+    fclose(file);
+    
     const char *filename = "LNG.txt"; 
     raise(SIGSTOP);
+        //coidei -> bloqueio sem_block -> ler_e_imprimir no filename -> abre sem_block -> raise(SIGSTOP) e reseta o ciclo.
 
     // abrir os dois semaforos fodasticos 
-    printf("abrindo os semaforos\n");
+    printf("abrindo o sem_block\n");
     
     /*
     pelo que eu lembro a gente vai usar o sem_prog para acordar o analista entao inicialmente ele vai ta esperando a mensagem para acordar,
@@ -84,9 +88,6 @@ int main(){
 
     /*
     sem_block eh usado para gerenciar o acesso ao conteudo do arquivo LNG.txt
-    nota: no final das contas ele eh a mesma coisa que o anterior, talvez nao precise do sem_prog, ja que o sem_block so deve ser liberado para o analista
-    quando o atendimento acorda-lo. basicamente os dois sempre so vao ter os bloqueios liberados na mesma hora, o que deixa o segundo meio irrelevante 
-    
     */
 
     sem_t* sem_block = sem_open("/sem_block", O_RDWR); 
@@ -96,31 +97,26 @@ int main(){
         return 1;
     }
         
-        // gambiarra para testar, basicamente para conseguir sempre o acesso dos semaforos 
-        if (sem_trywait(sem_block) == -1 ) {
-            perror("Semáforo sem_block em uso");
-            sem_post(sem_block); // Libera imediatamente
-        } else {
-            printf("Semáforo disponível\n");
-            sem_post(sem_block); // Libera imediatamente
-        }
 
     while (1)
     {
-        printf("Analista esta dormindo\n");
+        printf("Analista acordou\n");
         /*
         aqui da para sintetizar bem o que eu disse antes, os dois sempre vao aguardar juntos e liberar os semaforos juntos 
         no fim das contas eles nao tem funcoes diferentes, tendo em vista que sempre serao acordados no mesmo momento pelo atendimento
         */
         // bloquear arquivo LNG
         sem_wait(sem_block);
-                
+
+        if(sem_block != SEM_FAILED) sem_close(sem_block);
+
         // ler LNG e imprimir os 10 primeiros valores
         ler_e_imprimir(filename);
-        
         // desbloquear LNG
-
         sem_post(sem_block);
+        // adormecer o analista 
+        raise(SIGSTOP);
+
     }   
 
     sem_unlink("/sem_block");

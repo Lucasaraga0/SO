@@ -6,6 +6,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <signal.h>
+#include "fila.h"
 //#include <time.h>
 
 /* Faltantes
@@ -16,85 +17,32 @@
 */
 
 
-typedef struct cliente
-{
-    int pid;
-    int hora_chegada;
-    int prioridade;
-    int tempo_atendimento;
-} cliente;
-
-//inicio da sessao fila
-typedef struct {
-    struct cliente fila[101];
-    int inicio, fim;
-} FilaCliente;
-
-//inicio simboliza a exata posicao do primeiro elemento
-//fim simboliza a exata posicao do proximo elemento a ser adicionado (algo como proximo do ultimo elemento da fila)
-void inicializarFila(FilaCliente* f) {
-    f->inicio = 0; // representa o inicio da fila
-    f->fim = 0; // representa o proximo a ser iniciado
-}
-
-/* vazia quando o inicio alcanca o fim, que ocorre quando o ultimo elemento da fila eh coletado, fazendo com que incremente inicio
-e fique na mesma posicao de fim, que eh onde o proximo elemento deve ser adicionado */
-int filaVazia(FilaCliente* f) {
-    return f->inicio == f->fim;
-}
-
-/* vazia quando o fim +  1 alcanca o inicio , que ocorre quando adicionamos um elemento de tal forma que sobre apenas um espaco vazio no vetor,
-que acabamos cedendo para que essa checagem ocorra corretamente (checagem de o espaco para o proximo elemento a ser adicionado ser o mesmo
-canto que o primeiro da fila esta) de tal forma que se diferencie da filaVazia*/
-int filaCheia(FilaCliente* f) {
-    
-    return (f->fim + 1) % 100 == f->inicio;
-}
-
-//insercao normal, verifica se esta cheia. Caso nao esteja, insere no fim e incrementa fim
-void inserir(FilaCliente* f, struct cliente c) {
-    if (!(filaCheia(f))) {
-        f->fila[f->fim] = c;
-        f->fim = (f->fim + 1) % 100;
-    }
-}
-
-//remocao normal, se nao tiver vazia, remove o primeiro da fila
-cliente remover(FilaCliente* f) {
-    if (!(filaVazia(f))) {
-        struct cliente c = f->fila[f->inicio];
-        f->inicio = (f->inicio + 1) % 100;
-        return c;
-    }
-}
-
-//fim da sessao fila
-
-
-/*criar o vetor de clientes, que vai ser a nossa fila 
-a ideia da fila eh sempre aumentar o numero infinitamente, e a gente vai pegando o resto dos valores e alocando
-os clientes na posicao do resto respectivo, o val_inicial == val_final, então a fila está vazia se val_final - val_inicial == 100, 
-entao a fila esta cheia
-*/
-
-void* atendente(FilaCliente* fila){
+void* atendente(FilaCliente* fila, int paciencia){
     
     sem_t* sem_atend =  sem_open("/sem_atend", O_RDWR);   
     sem_t* sem_block = sem_open("/sem_block", O_RDWR);
     
-    // le na fila o prox cliente 
+    int satisfeitos, atendidos = 0;
+    int tempo_atual;
+
+    const char *filename = "/tmp/analista_pid.tmp";
+    FILE *file = fopen(filename, "r");
+    pid_t pid_analista;
+    fscanf(file, "%d", &pid_analista);
+    fclose(file);
+    
     usleep(100);
     
     // enquanto a fila nao esta vazia
     while (filaVazia != 0){
         // acorda o cliente
-        int pid_cliente;
+        int pid_cliente, hora_chegada;
         cliente c = remover(fila);
         
         pid_cliente = c.pid;
-
+        hora_chegada = c.hora_chegada;
         if (kill(pid_cliente, SIGCONT) == -1) {
-            perror("Erro ao enviar o sinal");
+            perror("Erro ao enviar o sinal para o cliente");
             exit(EXIT_FAILURE); 
         }
             
@@ -110,10 +58,20 @@ void* atendente(FilaCliente* fila){
         fprintf("\n%d\n", pid_cliente);
         // abre sem_block
         sem_post(sem_block);
+        atendidos++;
         // calcula satisfacao
-
             // (tempo atual - hora de chegada) <= paciência
+        if (tempo_atual - hora_chegada <= paciencia){
+            satisfeitos++;
+        }
         // acorda analista (opcional ou a cada 10)
+
+        if (atendidos % 10 == 0){
+            if (kill(pid_analista, SIGCONT) == -1) {
+                perror("Erro ao enviar o sinal para o analista");
+                exit(EXIT_FAILURE); 
+            }
+        } 
     }
 }
 
@@ -132,7 +90,7 @@ void* recepcao(int num_clientes, int tolerancia, int pid_1){
     pid_t pid_2;
     int i = 0;
     
-    while (num_clientes == 0 || i < num_clientes){
+    while ((num_clientes == 0) || (i < num_clientes)){
         //criar processos cliente
         
         pid_2 = fork();
@@ -192,7 +150,6 @@ void* recepcao(int num_clientes, int tolerancia, int pid_1){
                 printf("Erro ao deletar o arquivo 'demanda.txt'.\n");
             }
 
-            //printf("tempo de atendimento %d\n", tempo_atendimento);
 
             printf("pid_2: %d \n",pid_2);
             
