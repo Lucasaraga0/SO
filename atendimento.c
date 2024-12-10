@@ -7,29 +7,26 @@
 #include <pthread.h>
 #include <signal.h>
 #include "fila.h"
-//#include <time.h>
-
-/* Faltantes
-- Problema da recepcao
-- Checar se a passagem de parametro esta correta
-- Checar se a declaracao de variaveis na main esta correta e completa
-- Checar se o acesso as variaveis dentro das threads esta correta
-*/
+#include <time.h>
 
 
 void* atendente(FilaCliente* fila, int paciencia){
     
+    printf("Comecou a thread atendente");
+    
     sem_t* sem_atend =  sem_open("/sem_atend", O_RDWR);   
     sem_t* sem_block = sem_open("/sem_block", O_RDWR);
     
-    int satisfeitos, atendidos = 0;
-    int tempo_atual;
-
+    int satisfeitos = 0, atendidos = 0, prioridade = 0;
+    int tempo_atual; // pegar o tempo de execucao do processo 
+    
     const char *filename = "/tmp/analista_pid.tmp";
     FILE *file = fopen(filename, "r");
     pid_t pid_analista;
     fscanf(file, "%d", &pid_analista);
+    printf("Eu atendente peguei p_diddy do analista: %d\n", pid_analista);
     fclose(file);
+    
     
     usleep(100);
     
@@ -41,12 +38,22 @@ void* atendente(FilaCliente* fila, int paciencia){
         
         pid_cliente = c.pid;
         hora_chegada = c.hora_chegada;
+        prioridade = c.prioridade;
+        
         if (kill(pid_cliente, SIGCONT) == -1) {
             perror("Erro ao enviar o sinal para o cliente");
             exit(EXIT_FAILURE); 
         }
-            
+          
+        int tempo_max;
+        if (prioridade == 1){
+            tempo_max = paciencia/2 + hora_chegada;
+        }
+        else{
+            tempo_max = paciencia + hora_chegada;
+        }
 
+        usleep(5);
         // espera sem_atend abrir
         if(sem_atend != SEM_FAILED) sem_wait(sem_atend);
         // espera sem_block abrir
@@ -59,13 +66,14 @@ void* atendente(FilaCliente* fila, int paciencia){
         // abre sem_block
         sem_post(sem_block);
         atendidos++;
+        
         // calcula satisfacao
             // (tempo atual - hora de chegada) <= paciência
-        if (tempo_atual - hora_chegada <= paciencia){
+        if (tempo_atual - hora_chegada <= tempo_max){
             satisfeitos++;
         }
-        // acorda analista (opcional ou a cada 10)
 
+        // acorda analista (cada 10)
         if (atendidos % 10 == 0){
             if (kill(pid_analista, SIGCONT) == -1) {
                 perror("Erro ao enviar o sinal para o analista");
@@ -75,14 +83,13 @@ void* atendente(FilaCliente* fila, int paciencia){
     }
 }
 
-void* recepcao(int num_clientes, int tolerancia, int pid_1){
+void* recepcao(FilaCliente* fila, int num_clientes, int pid_1){
 
-
-   printf("Comecou a thread recepcao\n\n");
+   printf("Comecou a thread recepcao\n");
    sem_t* sem_atend =  sem_open("/sem_atend", O_CREAT, 0644, 1);   
    sem_t* sem_block = sem_open("/sem_block", O_CREAT, 0644, 1);   
 
-    int inicio, fim = 0;
+    int inicio = 0 , fim = 0;
     
     int hora_chegada;
     int tempo_atendimento;
@@ -113,22 +120,17 @@ void* recepcao(int num_clientes, int tolerancia, int pid_1){
             }
         } else {
             // Processo pai
-            //printf("pid do pai: %d\n", pid_1);
-                        // se a fila nao estiver cheia 
-            /*while (is_full(inicio, fim) == 0){
-                usleep(100);
-            } */
+
+            while (filaCheia(fila) == 0){
+                usleep(1);
+            } 
             
             /*gerar prioridade
             0: prioridade alta
             1: prioridade baixa
             */
             int prioridade_cliente = rand() % 2;
-            wait(NULL);
             //entra na fila
-            /*FILE* demanda = fopen("demanda.txt", "r");
-            fscanf(demanda, "%d", &tempo_atendimento);
-            fclose(demanda); */
             
             FILE* demanda = fopen("demanda.txt", "r");
             if (demanda == NULL) {
@@ -142,31 +144,24 @@ void* recepcao(int num_clientes, int tolerancia, int pid_1){
             }
             fclose(demanda);
 
-
-            // Agora tenta deletar o arquivo
-            if (remove("demanda.txt") == 0) {
-                printf("Arquivo 'demanda.txt' deletado com sucesso.\n");
-            } else {
-                printf("Erro ao deletar o arquivo 'demanda.txt'.\n");
-            }
-
-
             printf("pid_2: %d \n",pid_2);
-            
-            //inserir_na_fila(pid_2, hora_chegada,prioridade_cliente,tempo_atendimento);
+            tempo_atendimento; //pegar tempo decorrido ate agora, para colocar na fila 
+
+            cliente c;
+            c.hora_chegada = hora_chegada;
+            c.pid = pid_2;
+            c.prioridade = prioridade_cliente;
+            c.tempo_atendimento = tempo_atendimento;
+
+            inserir_na_fila(&fila, c);
            
             printf("Cliente %d adicionado na fila\n", i);
-            
-            //usleep(100000);
+
         }
             
         }
         
-    sem_close(sem_block);
-    sem_close(sem_atend);
 
-    sem_unlink("/sem_atend");
-    sem_unlink("/sem_block");
     
 }
 
@@ -177,20 +172,29 @@ int main(int argc, char *argv[]){
     1 - numero de clientes
     2 - tolerancia do cliente (X)
     */  
+    FilaCliente fila;
+    inicializarFila(&fila);
 
     int num_clientes = atoi(argv[1]);
     int tolerancia = atoi(argv[2]);
     
     printf("numero de clientes %d\n", num_clientes);
-    
+
     pid_t pid = getpid();
     printf("pid do atendimento: %d\n", pid);
 
     pthread_t thread_1, thread_2;
     pthread_create(&thread_1, NULL, atendente, NULL);
-    pthread_create(&thread_2, NULL, recepcao(num_clientes, tolerancia, pid), NULL);
+    pthread_create(&thread_2, NULL, recepcao(&fila, num_clientes, pid), NULL);
 
     pthread_join(thread_1, NULL);
     pthread_join(thread_2,NULL);
+
+    // sem_close(sem_block);
+    // sem_close(sem_atend);
+
+    sem_unlink("/sem_atend");
+    sem_unlink("/sem_block");
+
     return 0;
 }
