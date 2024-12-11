@@ -6,99 +6,54 @@
 #include <string.h>
 #include <pthread.h>
 #include <signal.h>
-//#include <time.h>
-
-/* Faltantes
-- Problema da recepcao
-- Checar se a passagem de parametro esta correta
-- Checar se a declaracao de variaveis na main esta correta e completa
-- Checar se o acesso as variaveis dentro das threads esta correta
-*/
+#include "fila.h"
+#include <time.h>
 
 
-typedef struct cliente
-{
-    int pid;
-    int hora_chegada;
-    int prioridade;
-    int tempo_atendimento;
-} cliente;
-
-//inicio da sessao fila
-typedef struct {
-    struct cliente fila[101];
-    int inicio, fim;
-} FilaCliente;
-
-//inicio simboliza a exata posicao do primeiro elemento
-//fim simboliza a exata posicao do proximo elemento a ser adicionado (algo como proximo do ultimo elemento da fila)
-void inicializarFila(FilaCliente* f) {
-    f->inicio = 0; // representa o inicio da fila
-    f->fim = 0; // representa o proximo a ser iniciado
-}
-
-/* vazia quando o inicio alcanca o fim, que ocorre quando o ultimo elemento da fila eh coletado, fazendo com que incremente inicio
-e fique na mesma posicao de fim, que eh onde o proximo elemento deve ser adicionado */
-int filaVazia(FilaCliente* f) {
-    return f->inicio == f->fim;
-}
-
-/* vazia quando o fim +  1 alcanca o inicio , que ocorre quando adicionamos um elemento de tal forma que sobre apenas um espaco vazio no vetor,
-que acabamos cedendo para que essa checagem ocorra corretamente (checagem de o espaco para o proximo elemento a ser adicionado ser o mesmo
-canto que o primeiro da fila esta) de tal forma que se diferencie da filaVazia*/
-int filaCheia(FilaCliente* f) {
+void* atendente(FilaCliente* fila, int paciencia){
     
-    return (f->fim + 1) % 100 == f->inicio;
-}
-
-//insercao normal, verifica se esta cheia. Caso nao esteja, insere no fim e incrementa fim
-void inserir(FilaCliente* f, struct cliente c) {
-    if (!(filaCheia(f))) {
-        f->fila[f->fim] = c;
-        f->fim = (f->fim + 1) % 100;
-    }
-}
-
-//remocao normal, se nao tiver vazia, remove o primeiro da fila
-cliente remover(FilaCliente* f) {
-    if (!(filaVazia(f))) {
-        struct cliente c = f->fila[f->inicio];
-        f->inicio = (f->inicio + 1) % 100;
-        return c;
-    }
-}
-
-//fim da sessao fila
-
-
-/*criar o vetor de clientes, que vai ser a nossa fila 
-a ideia da fila eh sempre aumentar o numero infinitamente, e a gente vai pegando o resto dos valores e alocando
-os clientes na posicao do resto respectivo, o val_inicial == val_final, então a fila está vazia se val_final - val_inicial == 100, 
-entao a fila esta cheia
-*/
-
-void* atendente(FilaCliente* fila){
+    printf("Comecou a thread atendente");
     
     sem_t* sem_atend =  sem_open("/sem_atend", O_RDWR);   
     sem_t* sem_block = sem_open("/sem_block", O_RDWR);
     
-    // le na fila o prox cliente 
+    int satisfeitos = 0, atendidos = 0, prioridade = 0;
+    int tempo_atual; // pegar o tempo de execucao do processo 
+    
+    const char *filename = "/tmp/analista_pid.tmp";
+    FILE *file = fopen(filename, "r");
+    pid_t pid_analista;
+    fscanf(file, "%d", &pid_analista);
+    printf("Eu atendente peguei p_diddy do analista: %d\n", pid_analista);
+    fclose(file);
+    
+    
     usleep(100);
     
     // enquanto a fila nao esta vazia
     while (filaVazia != 0){
         // acorda o cliente
-        int pid_cliente;
+        int pid_cliente, hora_chegada;
         cliente c = remover(fila);
         
         pid_cliente = c.pid;
-
+        hora_chegada = c.hora_chegada;
+        prioridade = c.prioridade;
+        
         if (kill(pid_cliente, SIGCONT) == -1) {
-            perror("Erro ao enviar o sinal");
+            perror("Erro ao enviar o sinal para o cliente");
             exit(EXIT_FAILURE); 
         }
-            
+          
+        int tempo_max;
+        if (prioridade == 1){
+            tempo_max = paciencia/2 + hora_chegada;
+        }
+        else{
+            tempo_max = paciencia + hora_chegada;
+        }
 
+        usleep(5);
         // espera sem_atend abrir
         if(sem_atend != SEM_FAILED) sem_wait(sem_atend);
         // espera sem_block abrir
@@ -110,21 +65,31 @@ void* atendente(FilaCliente* fila){
         fprintf("\n%d\n", pid_cliente);
         // abre sem_block
         sem_post(sem_block);
+        atendidos++;
+        
         // calcula satisfacao
-
             // (tempo atual - hora de chegada) <= paciência
-        // acorda analista (opcional ou a cada 10)
+        if (tempo_atual - hora_chegada <= tempo_max){
+            satisfeitos++;
+        }
+
+        // acorda analista (cada 10)
+        if (atendidos % 10 == 0){
+            if (kill(pid_analista, SIGCONT) == -1) {
+                perror("Erro ao enviar o sinal para o analista");
+                exit(EXIT_FAILURE); 
+            }
+        } 
     }
 }
 
-void* recepcao(int num_clientes, int tolerancia, int pid_1){
+void* recepcao(FilaCliente* fila, int num_clientes, int pid_1){
 
-
-   printf("Comecou a thread recepcao\n\n");
+   printf("Comecou a thread recepcao\n");
    sem_t* sem_atend =  sem_open("/sem_atend", O_CREAT, 0644, 1);   
    sem_t* sem_block = sem_open("/sem_block", O_CREAT, 0644, 1);   
 
-    int inicio, fim = 0;
+    int inicio = 0 , fim = 0;
     
     int hora_chegada;
     int tempo_atendimento;
@@ -132,7 +97,7 @@ void* recepcao(int num_clientes, int tolerancia, int pid_1){
     pid_t pid_2;
     int i = 0;
     
-    while (num_clientes == 0 || i < num_clientes){
+    while ((num_clientes == 0) || (i < num_clientes)){
         //criar processos cliente
         
         pid_2 = fork();
@@ -155,22 +120,17 @@ void* recepcao(int num_clientes, int tolerancia, int pid_1){
             }
         } else {
             // Processo pai
-            //printf("pid do pai: %d\n", pid_1);
-                        // se a fila nao estiver cheia 
-            /*while (is_full(inicio, fim) == 0){
-                usleep(100);
-            } */
+
+            while (filaCheia(fila) == 0){
+                usleep(1);
+            } 
             
             /*gerar prioridade
             0: prioridade alta
             1: prioridade baixa
             */
             int prioridade_cliente = rand() % 2;
-            wait(NULL);
             //entra na fila
-            /*FILE* demanda = fopen("demanda.txt", "r");
-            fscanf(demanda, "%d", &tempo_atendimento);
-            fclose(demanda); */
             
             FILE* demanda = fopen("demanda.txt", "r");
             if (demanda == NULL) {
@@ -184,32 +144,24 @@ void* recepcao(int num_clientes, int tolerancia, int pid_1){
             }
             fclose(demanda);
 
-
-            // Agora tenta deletar o arquivo
-            if (remove("demanda.txt") == 0) {
-                printf("Arquivo 'demanda.txt' deletado com sucesso.\n");
-            } else {
-                printf("Erro ao deletar o arquivo 'demanda.txt'.\n");
-            }
-
-            //printf("tempo de atendimento %d\n", tempo_atendimento);
-
             printf("pid_2: %d \n",pid_2);
-            
-            //inserir_na_fila(pid_2, hora_chegada,prioridade_cliente,tempo_atendimento);
+            tempo_atendimento; //pegar tempo decorrido ate agora, para colocar na fila 
+
+            cliente c;
+            c.hora_chegada = hora_chegada;
+            c.pid = pid_2;
+            c.prioridade = prioridade_cliente;
+            c.tempo_atendimento = tempo_atendimento;
+
+            inserir_na_fila(&fila, c);
            
             printf("Cliente %d adicionado na fila\n", i);
-            
-            //usleep(100000);
+
         }
             
         }
         
-    sem_close(sem_block);
-    sem_close(sem_atend);
 
-    sem_unlink("/sem_atend");
-    sem_unlink("/sem_block");
     
 }
 
@@ -220,20 +172,29 @@ int main(int argc, char *argv[]){
     1 - numero de clientes
     2 - tolerancia do cliente (X)
     */  
+    FilaCliente fila;
+    inicializarFila(&fila);
 
     int num_clientes = atoi(argv[1]);
     int tolerancia = atoi(argv[2]);
     
     printf("numero de clientes %d\n", num_clientes);
-    
+
     pid_t pid = getpid();
     printf("pid do atendimento: %d\n", pid);
 
     pthread_t thread_1, thread_2;
     pthread_create(&thread_1, NULL, atendente, NULL);
-    pthread_create(&thread_2, NULL, recepcao(num_clientes, tolerancia, pid), NULL);
+    pthread_create(&thread_2, NULL, recepcao(&fila, num_clientes, pid), NULL);
 
     pthread_join(thread_1, NULL);
     pthread_join(thread_2,NULL);
+
+    // sem_close(sem_block);
+    // sem_close(sem_atend);
+
+    sem_unlink("/sem_atend");
+    sem_unlink("/sem_block");
+
     return 0;
 }
