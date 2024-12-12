@@ -14,13 +14,10 @@
 
 /*
 Para fazer
-
 + corrigir medicao de tempo.
-+ usar thread direito porra (paralelismo correto, ta tudo baguncado), ao inves de ficar usando usleeps absurdos.
-
-- quando o numero de clientes for infinito colocar a tecla para parar a criacao de clietnes
-- printar satisfifacao
-- printar o tempo de execucao total do programa (main?)
+    - printar satisfifacao
+    - printar o tempo de execucao total do programa (main?)
+- tem um cliente a mais, quando aperta o S, ele nao vai para o LNG 
 */
 
 bool podeparar = false;
@@ -40,7 +37,7 @@ typedef struct {
 
 
 void* atendente(void* args){
-    usleep(400);
+    usleep(1000);
 
     AtendenteArgs* atend_args = (AtendenteArgs*) args;
 
@@ -173,7 +170,6 @@ void* recepcao(void* args){
     sem_t* sem_block = sem_open("/sem_block", O_CREAT, 0644, 1);   
     sem_t* sem_fila = sem_open("/sem_fila", O_CREAT, 0644, 1);
 
-    
     int hora_chegada;
 
 
@@ -182,13 +178,13 @@ void* recepcao(void* args){
     // colocar o negocio para receber a tecla s e parar a criacao de clientes quando for 0
     while ((num_clientes == 0) || (i < num_clientes)){
 
-        if (podeparar == true){
-            break;
-        }
+
 
         //criar processos cliente
         
         pid_t pid_cliente = fork();
+
+
         i ++;
 
         if (pid_cliente < 0){
@@ -220,6 +216,9 @@ void* recepcao(void* args){
                 usleep(1);
             } 
             
+            if (podeparar == true){
+                break;
+            }
             /*gerar prioridade
             0: prioridade alta
             1: prioridade baixa
@@ -272,6 +271,12 @@ void* recepcao(void* args){
         podeparar = true;
 }
 
+void* stop_0(void* arg)
+{
+	while(getchar() != 's');
+    podeparar = true;
+}
+
 int main(int argc, char *argv[]){
 
     /*
@@ -294,7 +299,7 @@ int main(int argc, char *argv[]){
 
     printf("Numero de clientes %d\n", num_clientes);
 
-    pthread_t thread_atendente, thread_recepcao;
+    pthread_t thread_atendente, thread_recepcao, thread_pare;
 
     AtendenteArgs atend_args;
     atend_args.fila = &fila;
@@ -309,13 +314,17 @@ int main(int argc, char *argv[]){
 
     pthread_create(&thread_atendente, NULL, atendente, &atend_args);
     pthread_create(&thread_recepcao, NULL, recepcao, &recep_args);
-
+    
+    if (num_clientes == 0) pthread_create(&thread_pare, NULL, stop_0, NULL);
+    
     pthread_join(thread_atendente, NULL);
     pthread_join(thread_recepcao,NULL);
+    if (num_clientes == 0) pthread_join(thread_pare,NULL);
 
     sem_unlink("/sem_atend");
     sem_unlink("/sem_block");
     sem_unlink("/sem_fila");
-    
+    clock_t final_programa = clock();
+
     return 0;
 }
