@@ -9,6 +9,18 @@
 #include "fila.h"
 #include <time.h>
 
+/*
+Para fazer
+
++ corrigir medicao de tempo.
++ usar thread direito porra (paralelismo correto, ta tudo baguncado), ao inves de ficar usando usleeps absurdos.
+
+- quando o numero de clientes for infinito colocar a tecla para parar a criacao de clietnes
+- printar satisfifacao
+- printar o tempo de execucao total do programa (main?)
+*/
+
+
 typedef struct {
     FilaCliente* fila;
     int paciencia;
@@ -24,6 +36,8 @@ typedef struct {
 
 
 void* atendente(void* args){
+    usleep(100000);
+
     AtendenteArgs* atend_args = (AtendenteArgs*) args;
 
     FilaCliente* fila = atend_args-> fila;
@@ -51,30 +65,45 @@ void* atendente(void* args){
     
     //se no comeco ainda tiver vazia ao chegar aqui
     //na nossa logica, so estara vazia novamente apos terminar programa
+    
     while(filaVazia(fila)){
+        usleep(1);
     }
 
     
+    
     // enquanto a fila nao esta vazia
     while (!filaVazia(fila)){
+        usleep(10000);
+        printf("Entrou no loop, vai ser atendido!\n");
         // acorda o cliente
         int pid_cliente, hora_chegada, prioridade;
+        
         cliente c = remover(fila);
+
+        printf("pegou cliente da fila\n");
         
         pid_cliente = c.pid;
         hora_chegada = c.hora_chegada;
         prioridade = c.prioridade;
+
+        printf("pid_do_cliente: %d\n", pid_cliente);
         
         if (kill(pid_cliente, SIGCONT) == -1) {
             perror("Erro ao enviar o sinal para o cliente");
             exit(EXIT_FAILURE); 
         }
         
+        printf("cliente acordado\n");
+
         clock_t tempo_atual = clock();
         
+        printf("peguei tempo atual\n");
         // checar as medidas de tempo para nao dar problema
         double tempo_decorrido = (tempo_atual - inicio_programa)/CLOCKS_PER_SEC; 
         int tempo_max;
+
+        printf("calculei tempo_decorrido\n");
         
         if (prioridade == 1){
             //caso der ruim, ver unidades de paciencia e hora_chegada
@@ -83,17 +112,20 @@ void* atendente(void* args){
         else{
             tempo_max = paciencia + hora_chegada;
         }
-
-        usleep(5);
+        
+        printf("tempo_max obitido: %d\n", tempo_max);
+        //printf("oi0\n");
         // espera sem_atend abrir
+        //printf("oi1\n");
         if(sem_atend != SEM_FAILED) sem_wait(sem_atend);
+        if(sem_atend != SEM_FAILED) sem_post(sem_atend);
         // espera sem_block abrir
+        //printf("oi2\n");
         if(sem_block != SEM_FAILED) sem_wait(sem_block);
-        // fecha semaforo sem_block
-        if(sem_block != SEM_FAILED) sem_close(sem_block);
+        //printf("oi3\n");
         // escreve pid do cliente em LNG
-        FILE* LNG = fopen("LNG.txt", "w");
-        fprintf("\n%d\n", pid_cliente);
+        FILE* LNG = fopen("LNG.txt", "a");
+        fprintf(LNG, "%d\n", pid_cliente);
         fclose(LNG);
         // abre sem_block
         sem_post(sem_block);
@@ -112,6 +144,10 @@ void* atendente(void* args){
                 exit(EXIT_FAILURE); 
             }
         } 
+    }
+    if (kill(pid_analista, SIGCONT) == -1) {
+        perror("Erro ao enviar o sinal para o analista");
+        exit(EXIT_FAILURE); 
     }
 }
 
@@ -145,6 +181,7 @@ void* recepcao(void* args){
         }
 
         else if(pid_cliente == 0){
+           // sem_wait(sem_demanda);  // Bloqueia o acesso ao demanda.txt
 
             //int pid_cliente = getpid();
             // printf("pid do cliente %d: %d\n", i, pid_cliente);
@@ -154,6 +191,9 @@ void* recepcao(void* args){
                 perror("Erro ao executar cliente");
                 exit(EXIT_FAILURE);
             }
+
+            //sem_post(sem_demanda); 
+            
         } else {
             // Processo pai
 
@@ -165,6 +205,7 @@ void* recepcao(void* args){
             0: prioridade alta
             1: prioridade baixa
             */
+            usleep(10000);
             int prioridade_cliente = rand() % 2;
             //entra na fila
             int tempo_atendimento;
@@ -173,13 +214,15 @@ void* recepcao(void* args){
                 perror("Erro ao abrir o arquivo 'demanda.txt'");
                 exit(EXIT_FAILURE);
             }
+            
+
             if (fscanf(demanda, "%d", &tempo_atendimento) != 1) {
                 fprintf(stderr, "Erro ao ler o tempo de atendimento do arquivo 'demanda.txt'\n");
                 fclose(demanda);
                 exit(EXIT_FAILURE);
             }
             fclose(demanda);
-            
+            printf("Tempo de atendimento, que eu pegueo do demanda.txt: %d\n", tempo_atendimento);
             clock_t tempo_atual = clock();
             //printf("pid_cliente: %d \n",pid_cliente);
             double tempo_decorrido = (double)(tempo_atual - inicio_programa) / CLOCKS_PER_SEC;
@@ -190,7 +233,7 @@ void* recepcao(void* args){
             c.prioridade = prioridade_cliente;
             c.tempo_atendimento = tempo_atendimento;
 
-            inserir_na_fila(&fila, c);
+            inserir(fila, c);
            
             printf("Cliente %d adicionado na fila\n", i);
 
@@ -209,6 +252,9 @@ int main(int argc, char *argv[]){
     1 - numero de clientes
     2 - tolerancia do cliente (X)
     */  
+    
+    sem_unlink("/sem_atend");
+    sem_unlink("/sem_block");
 
     FilaCliente fila;
     inicializarFila(&fila);
