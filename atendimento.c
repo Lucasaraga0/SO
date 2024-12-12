@@ -3,11 +3,14 @@
 #include <semaphore.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <string.h>
 #include <pthread.h>
 #include <signal.h>
 #include "fila.h"
 #include <time.h>
+#include<stdbool.h>
 
 /*
 Para fazer
@@ -20,6 +23,7 @@ Para fazer
 - printar o tempo de execucao total do programa (main?)
 */
 
+bool podeparar = false;
 
 typedef struct {
     FilaCliente* fila;
@@ -36,7 +40,7 @@ typedef struct {
 
 
 void* atendente(void* args){
-    usleep(100000);
+    usleep(400);
 
     AtendenteArgs* atend_args = (AtendenteArgs*) args;
 
@@ -44,10 +48,11 @@ void* atendente(void* args){
     int paciencia = atend_args -> paciencia;
     clock_t inicio_programa = atend_args->inicio_programa;
 
-    printf("Comecou a thread atendente");
+    printf("Comecou a thread atendente\n");
     
     sem_t* sem_atend =  sem_open("/sem_atend", O_RDWR);   
     sem_t* sem_block = sem_open("/sem_block", O_RDWR);
+    sem_t* sem_fila = sem_open("/sem_fila", O_RDWR);
     
     int satisfeitos = 0, atendidos = 0;
 
@@ -55,7 +60,7 @@ void* atendente(void* args){
     const char *filename = "/tmp/analista_pid.tmp";
     FILE *file = fopen(filename, "r");
     if (!file) {
-        perror("Erro ao abrir arquivo analista_pid.tmp");
+        perror("Erro ao abrir arquivo analista_pid.tmp\n");
         pthread_exit(NULL);
     }
     pid_t pid_analista;
@@ -67,44 +72,46 @@ void* atendente(void* args){
     //na nossa logica, so estara vazia novamente apos terminar programa
     
     while(filaVazia(fila)){
-        usleep(1);
+        usleep(10);
     }
 
-    
-    
     // enquanto a fila nao esta vazia
-    while (!filaVazia(fila)){
-        usleep(10000);
-        printf("Entrou no loop, vai ser atendido!\n");
+    while ((!filaVazia(fila)) || !(podeparar)){
+
+        // se a fila estiver vazia, mas ainda estao sendo criados novos clientes         
+        while(filaVazia(fila) && !(podeparar)){
+            usleep(10);
+        }
+
+        if(filaVazia(fila) && podeparar) break;
+
+        //usleep(100);
         // acorda o cliente
         int pid_cliente, hora_chegada, prioridade;
-        
+        if(sem_fila != SEM_FAILED) sem_wait(sem_fila);
         cliente c = remover(fila);
-
-        printf("pegou cliente da fila\n");
-        
+        if(sem_fila != SEM_FAILED) sem_post(sem_fila);
         pid_cliente = c.pid;
         hora_chegada = c.hora_chegada;
         prioridade = c.prioridade;
 
-        printf("pid_do_cliente: %d\n", pid_cliente);
-        
+        printf("Cliente %d vai ser atendido\n", pid_cliente);
+
         if (kill(pid_cliente, SIGCONT) == -1) {
-            perror("Erro ao enviar o sinal para o cliente");
+            perror("Erro ao enviar o sinal para o cliente\n");
             exit(EXIT_FAILURE); 
-        }
+        } 
+        printf("Cliente %d acordado\n", pid_cliente);
         
-        printf("cliente acordado\n");
+        int status;
+        waitpid(pid_cliente, &status, 0);                
 
         clock_t tempo_atual = clock();
         
-        printf("peguei tempo atual\n");
         // checar as medidas de tempo para nao dar problema
         double tempo_decorrido = (tempo_atual - inicio_programa)/CLOCKS_PER_SEC; 
         int tempo_max;
 
-        printf("calculei tempo_decorrido\n");
-        
         if (prioridade == 1){
             //caso der ruim, ver unidades de paciencia e hora_chegada
             tempo_max = paciencia/2 + hora_chegada;
@@ -113,26 +120,23 @@ void* atendente(void* args){
             tempo_max = paciencia + hora_chegada;
         }
         
-        printf("tempo_max obitido: %d\n", tempo_max);
-        //printf("oi0\n");
         // espera sem_atend abrir
-        //printf("oi1\n");
         if(sem_atend != SEM_FAILED) sem_wait(sem_atend);
         if(sem_atend != SEM_FAILED) sem_post(sem_atend);
         // espera sem_block abrir
-        //printf("oi2\n");
         if(sem_block != SEM_FAILED) sem_wait(sem_block);
-        //printf("oi3\n");
         // escreve pid do cliente em LNG
         FILE* LNG = fopen("LNG.txt", "a");
         fprintf(LNG, "%d\n", pid_cliente);
         fclose(LNG);
         // abre sem_block
+
         sem_post(sem_block);
+        printf("Cliente %d terminou de ser atendido\n", pid_cliente);
         atendidos++;
         
         // calcula satisfacao
-            // (tempo atual - hora de chegada) <= paciência
+
         if ((int)tempo_decorrido - hora_chegada <= tempo_max){
             satisfeitos++;
         }
@@ -140,15 +144,20 @@ void* atendente(void* args){
         // acorda analista (cada 10)
         if (atendidos % 10 == 0){
             if (kill(pid_analista, SIGCONT) == -1) {
-                perror("Erro ao enviar o sinal para o analista");
+                perror("Erro ao enviar o sinal para o analista\n");
                 exit(EXIT_FAILURE); 
             }
+            //waitpid(pid_analista, &status, WUNTRACED);
         } 
     }
     if (kill(pid_analista, SIGCONT) == -1) {
-        perror("Erro ao enviar o sinal para o analista");
+        perror("Erro ao enviar o sinal para o analista\n");
         exit(EXIT_FAILURE); 
     }
+
+    printf("A fila esta vazia? %d\n", filaVazia(fila)); 
+    printf("A\nA\nA\nA\nA\nA\nA\nA\nA\nA\nA\nA\nA\nA\nA\nA\nA\nA\nA\n");
+    
 }
 
 void* recepcao(void* args){
@@ -162,6 +171,7 @@ void* recepcao(void* args){
     printf("Comecou a thread recepcao\n");
     sem_t* sem_atend =  sem_open("/sem_atend", O_CREAT, 0644, 1);   
     sem_t* sem_block = sem_open("/sem_block", O_CREAT, 0644, 1);   
+    sem_t* sem_fila = sem_open("/sem_fila", O_CREAT, 0644, 1);
 
     
     int hora_chegada;
@@ -169,13 +179,20 @@ void* recepcao(void* args){
 
     int i = 0;
     
+    // colocar o negocio para receber a tecla s e parar a criacao de clientes quando for 0
     while ((num_clientes == 0) || (i < num_clientes)){
+
+        if (podeparar == true){
+            break;
+        }
+
         //criar processos cliente
         
         pid_t pid_cliente = fork();
         i ++;
 
         if (pid_cliente < 0){
+
             printf("Não criou cliente\n");
             exit(EXIT_FAILURE);
         }
@@ -186,6 +203,8 @@ void* recepcao(void* args){
             //int pid_cliente = getpid();
             // printf("pid do cliente %d: %d\n", i, pid_cliente);
             //printf("Cliente %d criado!\n", i);
+            // pode ate dar um sem_wait no sem_demanda aqui, mas quando a gente vai abrir? 
+            // as linhas abaixo do exec nunca sao executadas, ele precisaria abrir no cliente? 
 
             if (execl("./cliente", "cliente", (char *)NULL) == -1) {
                 perror("Erro ao executar cliente");
@@ -196,7 +215,7 @@ void* recepcao(void* args){
             
         } else {
             // Processo pai
-
+            
             while (filaCheia(fila)){
                 usleep(1);
             } 
@@ -205,13 +224,19 @@ void* recepcao(void* args){
             0: prioridade alta
             1: prioridade baixa
             */
-            usleep(10000);
+            
+            //usleep(10000);
+            int status;
+            waitpid(pid_cliente, &status, WUNTRACED);
+
             int prioridade_cliente = rand() % 2;
             //entra na fila
             int tempo_atendimento;
+            // ficar num laço esperando que o processo cliente durma
+            
             FILE* demanda = fopen("demanda.txt", "r");
             if (demanda == NULL) {
-                perror("Erro ao abrir o arquivo 'demanda.txt'");
+                perror("Erro ao abrir o arquivo 'demanda.txt'\n");
                 exit(EXIT_FAILURE);
             }
             
@@ -222,7 +247,8 @@ void* recepcao(void* args){
                 exit(EXIT_FAILURE);
             }
             fclose(demanda);
-            printf("Tempo de atendimento, que eu pegueo do demanda.txt: %d\n", tempo_atendimento);
+            printf("Voltei para o atendimento, apos fechar o demanda!\n");
+            //printf("Tempo de atendimento, que eu peguei do demanda.txt: %d\n", tempo_atendimento);
             clock_t tempo_atual = clock();
             //printf("pid_cliente: %d \n",pid_cliente);
             double tempo_decorrido = (double)(tempo_atual - inicio_programa) / CLOCKS_PER_SEC;
@@ -233,16 +259,17 @@ void* recepcao(void* args){
             c.prioridade = prioridade_cliente;
             c.tempo_atendimento = tempo_atendimento;
 
+            printf("Cliente %d vai ser adicionado na fila! \n", pid_cliente);
+            if(sem_fila != SEM_FAILED) sem_wait(sem_fila);
             inserir(fila, c);
+            if(sem_fila != SEM_FAILED) sem_post(sem_fila);
            
-            printf("Cliente %d adicionado na fila\n", i);
+            printf("Cliente %d adicionado na fila\n", pid_cliente);
 
-        }
-            
         }
         
-
-    
+        }
+        podeparar = true;
 }
 
 int main(int argc, char *argv[]){
@@ -255,6 +282,7 @@ int main(int argc, char *argv[]){
     
     sem_unlink("/sem_atend");
     sem_unlink("/sem_block");
+    sem_unlink("/sem_fila");
 
     FilaCliente fila;
     inicializarFila(&fila);
@@ -287,6 +315,7 @@ int main(int argc, char *argv[]){
 
     sem_unlink("/sem_atend");
     sem_unlink("/sem_block");
-
+    sem_unlink("/sem_fila");
+    
     return 0;
 }
