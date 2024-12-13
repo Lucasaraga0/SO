@@ -18,6 +18,7 @@ Para fazer
     - printar satisfifacao
     - printar o tempo de execucao total do programa (main?)
 - tem um cliente a mais, quando aperta o S, ele nao vai para o LNG 
+- tem problema se o analista nunca terminar?
 */
 
 bool podeparar = false;
@@ -101,12 +102,16 @@ void* atendente(void* args){
         printf("Cliente %d acordado\n", pid_cliente);
         
         int status;
-        waitpid(pid_cliente, &status, 0);                
+        waitpid(pid_cliente, &status, 0);               
+
+        printf("Cliente %d terminou de ser atendido\n", pid_cliente);
 
         clock_t tempo_atual = clock();
         
         // checar as medidas de tempo para nao dar problema
         double tempo_decorrido = (tempo_atual - inicio_programa)/CLOCKS_PER_SEC; 
+        // tempo decorrido esta medido em segundos
+        tempo_decorrido = tempo_decorrido * 1000;
         int tempo_max;
 
         if (prioridade == 1){
@@ -129,12 +134,13 @@ void* atendente(void* args){
         // abre sem_block
 
         sem_post(sem_block);
-        printf("Cliente %d terminou de ser atendido\n", pid_cliente);
         atendidos++;
         
         // calcula satisfacao
 
         if ((int)tempo_decorrido - hora_chegada <= tempo_max){
+            int aux = (int)tempo_decorrido - hora_chegada;
+            printf("O cliente foi satisfeito pois o tempo maximo era %d, e o tempo atual eh %d\n", tempo_max,aux);
             satisfeitos++;
         }
 
@@ -144,7 +150,7 @@ void* atendente(void* args){
                 perror("Erro ao enviar o sinal para o analista\n");
                 exit(EXIT_FAILURE); 
             }
-            //waitpid(pid_analista, &status, WUNTRACED);
+        
         } 
     }
     if (kill(pid_analista, SIGCONT) == -1) {
@@ -154,7 +160,11 @@ void* atendente(void* args){
 
     printf("A fila esta vazia? %d\n", filaVazia(fila)); 
     printf("A\nA\nA\nA\nA\nA\nA\nA\nA\nA\nA\nA\nA\nA\nA\nA\nA\nA\nA\n");
-    
+    int status;
+
+    waitpid(pid_analista, &status, WUNTRACED);
+    double taxa = (satisfeitos/atendidos) * 100;
+    printf("A taxa de satisfacao total foi igual a %f%%\n", taxa);
 }
 
 void* recepcao(void* args){
@@ -251,7 +261,8 @@ void* recepcao(void* args){
             clock_t tempo_atual = clock();
             //printf("pid_cliente: %d \n",pid_cliente);
             double tempo_decorrido = (double)(tempo_atual - inicio_programa) / CLOCKS_PER_SEC;
-
+            // tempo decorrido esta em segundos, converter para milisegundos
+            tempo_decorrido = tempo_decorrido * 1000;
             cliente c;
             c.hora_chegada = (int)tempo_decorrido;
             c.pid = pid_cliente;
@@ -293,6 +304,7 @@ int main(int argc, char *argv[]){
     inicializarFila(&fila);
 
     int num_clientes = atoi(argv[1]);
+    // a tolerancia esta medida em milisegundos
     int tolerancia = atoi(argv[2]);
 
     clock_t inicio_programa = clock();
@@ -326,5 +338,8 @@ int main(int argc, char *argv[]){
     sem_unlink("/sem_fila");
     clock_t final_programa = clock();
 
+    double tempo_total = (final_programa - inicio_programa)/CLOCKS_PER_SEC;
+    int tempo = tempo_total *1000;
+    printf("O tempo de execucao total foi igual a %d ms \n", tempo);
     return 0;
 }
