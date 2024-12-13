@@ -19,19 +19,23 @@ int main()
  else
  tempo = 1;
 
+ printf("vou abrir demanda, cliente %d\n", getpid());
  FILE* demanda = fopen("demanda.txt", "w+");
  fprintf(demanda, "%d", tempo);
- printf("\n%d\n", tempo);
+ //printf("\n%d\n", tempo);
  fclose(demanda);
+ printf("fechei demanda, cliente %d\n", getpid());
 
  raise(SIGSTOP);
 
  sem_t *sem = sem_open("/sem_atend", O_RDWR);
  if(sem != SEM_FAILED) sem_wait(sem);
 
+ printf("cliente %d conseguiu liberacao do semaforo sem_atend\n", getpid());
  usleep(tempo);
 
  if(sem != SEM_FAILED) sem_post(sem);
+ printf("cliente %d liberou do semaforo sem_atend\n", getpid());
 
  return 0;
 

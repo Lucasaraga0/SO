@@ -6,7 +6,6 @@
 #include <string.h>
 #include <signal.h>
 
-sem_t* sem_block;
 
 void ler_e_imprimir(const char *filename) {
     FILE *file = fopen(filename, "r");
@@ -68,9 +67,9 @@ void ler_e_imprimir(const char *filename) {
 int main(){
     
     //gera arquivo com pid e dorme
-    const char *filename = "/tmp/analista_pid.tmp";
+    const char *pid_analista = "/tmp/analista_pid.tmp";
     pid_t pid = getpid();
-    FILE *file = fopen(filename, "w");
+    FILE *file = fopen(pid_analista, "w");
     fprintf(file, "%d\n", pid);
     fclose(file);
     
@@ -105,10 +104,9 @@ int main(){
         aqui da para sintetizar bem o que eu disse antes, os dois sempre vao aguardar juntos e liberar os semaforos juntos 
         no fim das contas eles nao tem funcoes diferentes, tendo em vista que sempre serao acordados no mesmo momento pelo atendimento
         */
-        // bloquear arquivo LNG
-        sem_wait(sem_block);
 
-        if(sem_block != SEM_FAILED) sem_close(sem_block);
+        // bloquear arquivo LNG
+        if(sem_block != SEM_FAILED) sem_wait(sem_block);
 
         // ler LNG e imprimir os 10 primeiros valores
         ler_e_imprimir(filename);
@@ -119,7 +117,7 @@ int main(){
 
     }   
 
-    sem_unlink("/sem_block");
+    //sem_unlink("/sem_block");
     
     return 0;
 }
