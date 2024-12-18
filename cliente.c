@@ -19,12 +19,11 @@ int main()
  else
  tempo = 1;
 
- printf("vou abrir demanda, cliente %d\n", getpid());
+// printf("vou abrir demanda, cliente %d\n", getpid());
  FILE* demanda = fopen("demanda.txt", "w+");
  fprintf(demanda, "%d", tempo);
- //printf("\n%d\n", tempo);
  fclose(demanda);
- printf("fechei demanda, cliente %d\n", getpid());
+// printf("fechei demanda, cliente %d\n", getpid());
 
  raise(SIGSTOP);
 
