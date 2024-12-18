@@ -75,18 +75,13 @@ int main(){
     
     const char *filename = "LNG.txt"; 
     raise(SIGSTOP);
-        //coidei -> bloqueio sem_block -> ler_e_imprimir no filename -> abre sem_block -> raise(SIGSTOP) e reseta o ciclo.
-
-    // abrir os dois semaforos fodasticos 
-    printf("abrindo o sem_block\n");
-    
-    /*
-    pelo que eu lembro a gente vai usar o sem_prog para acordar o analista entao inicialmente ele vai ta esperando a mensagem para acordar,
-    essa mensagem eh a liberacao do semaforo por parte da thread 1 do atendimento
-    */
-
-    /*
-    sem_block eh usado para gerenciar o acesso ao conteudo do arquivo LNG.txt
+    /* 
+     -> coidei
+     -> bloqueio sem_block
+     -> ler_e_imprimir no filename 
+     -> abre sem_block 
+     -> raise(SIGSTOP) 
+     -> reseta o ciclo.
     */
 
     sem_t* sem_block = sem_open("/sem_block", O_RDWR); 
@@ -99,11 +94,7 @@ int main(){
 
     while (1)
     {
-        printf("Analista acordou\n");
-        /*
-        aqui da para sintetizar bem o que eu disse antes, os dois sempre vao aguardar juntos e liberar os semaforos juntos 
-        no fim das contas eles nao tem funcoes diferentes, tendo em vista que sempre serao acordados no mesmo momento pelo atendimento
-        */
+        //printf("Analista acordou\n");
 
         // bloquear arquivo LNG
         if(sem_block != SEM_FAILED) sem_wait(sem_block);
@@ -117,7 +108,6 @@ int main(){
 
     }   
 
-    //sem_unlink("/sem_block");
     
     return 0;
 }

@@ -8,14 +8,13 @@
 #include <string.h>
 #include <pthread.h>
 #include <signal.h>
-#include "fila.h"
 #include <time.h>
 #include<stdbool.h>
+#include "fila.h"
 
 /*
 Para fazer
-+ corrigir medicao de tempo.
-- tem problema se o analista nunca terminar?
+
 */
 
 bool podeparar = false;
@@ -23,14 +22,15 @@ bool podeparar = false;
 typedef struct {
     FilaCliente* fila;
     int paciencia;
-    clock_t inicio_programa;
+    struct timespec inicio_programa;
+;
 } AtendenteArgs;
 
 typedef struct {
     FilaCliente* fila;
     int num_clientes;
     pid_t pid_atendente;
-    clock_t inicio_programa;
+    struct timespec inicio_programa;
 } RecepcaoArgs;
 
 
@@ -41,8 +41,8 @@ void* atendente(void* args){
 
     FilaCliente* fila = atend_args-> fila;
     int paciencia = atend_args -> paciencia;
-    clock_t inicio_programa = atend_args->inicio_programa;
-
+    struct timespec inicio_programa = atend_args->inicio_programa;
+    int caras_pacientes = 0, caras_impacientes = 0;
     printf("Comecou a thread atendente\n");
     
     sem_t* sem_atend =  sem_open("/sem_atend", O_RDWR);   
@@ -103,26 +103,36 @@ void* atendente(void* args){
 
         //printf("Cliente %d terminou de ser atendido\n", pid_cliente);
 
-        clock_t tempo_atual = clock();
-        
-        // checar as medidas de tempo para nao dar problema
-        double aux1 = (double)tempo_atual/CLOCKS_PER_SEC;
+        //clock_t tempo_atual = clock();
+        struct timespec tempo_atual;
+        clock_gettime(CLOCK_REALTIME, &tempo_atual);
 
-        printf("\nO tempo atual eh  %f\n\n", aux1);
+        // checar as medidas de tempo para nao dar problema
+        // double aux1 = (double)tempo_atual/CLOCKS_PER_SEC;
+        /*
+        aqui eh a conversao para microsegundos, ele pega o tempo em segundos e multiplica por 10e6
+        e soma com o (tempo em nanosegundos multiplicado por 10e3) 
+        */
+        double tempo_decorrido = (tempo_atual.tv_sec - inicio_programa.tv_sec) *1e6 + 
+                      (tempo_atual.tv_nsec - inicio_programa.tv_nsec) /1e3;
+
+        //printf("\nO tempo atual eh  %f\n\n", tempo_decorrido);
         
-        double tempo_decorrido = ((double)tempo_atual - inicio_programa)/CLOCKS_PER_SEC; 
-        // tempo decorrido esta medido em segundos
-        tempo_decorrido = tempo_decorrido * 1000000 * 2;// tempo decorrido agora esta em microsegundos
+        //double tempo_decorrido = ((double)tempo_atual - inicio_programa)/CLOCKS_PER_SEC; 
         
-        printf("\nO tempo decorrido foi %f\n\n", tempo_decorrido);
+        // tempo decorrido esta medido em microsegundos
+
+        //printf("\nO tempo decorrido foi %f\n\n", tempo_decorrido);
         int tempo_max;
 
         if (prioridade == 1){
             //caso der ruim, ver unidades de paciencia e hora_chegada
             tempo_max = paciencia/2;
+            caras_impacientes ++;
         }
         else{
             tempo_max = paciencia;
+            caras_pacientes++;
         }
         
         // espera sem_atend abrir
@@ -143,14 +153,16 @@ void* atendente(void* args){
 
         int aux = (int)tempo_decorrido - (hora_chegada);
         if ((int)tempo_decorrido - (hora_chegada) <= tempo_max){
-            printf("O cliente foi satisfeito pois o tempo maximo era %d, e o tempo que ele ficou na fila foi %d\n", tempo_max,aux);
-            printf("O tempo decorrido foi %f e a hora de chegada foi %d\n", tempo_decorrido, hora_chegada);
+            //printf("O cliente foi satisfeito pois o tempo maximo era %d, e o tempo que ele ficou na fila foi %d\n", tempo_max,aux);
+            //printf("O tempo decorrido foi %f e a hora de chegada foi %d\n", tempo_decorrido, hora_chegada);
             satisfeitos++;
         }
+        /*
         else{
             printf("O cliente nao foi satisfeito pois o tempo maximo era %d e o tempo que ele ficou na fila foi %d\n", tempo_max, aux);
         }
-
+        */
+        
         // acorda analista (cada 10)
         if (atendidos % 10 == 0){
             if (kill(pid_analista, SIGCONT) == -1) {
@@ -168,9 +180,10 @@ void* atendente(void* args){
 
     int status;
 
-    waitpid(pid_analista, &status, WUNTRACED);
+    //waitpid(pid_analista, &status, WUNTRACED);
     double taxa = ((double)satisfeitos/atendidos) * 100;
     printf("O numero de atendidos foi %d e o numero de satisfeitos foi %d\n", atendidos, satisfeitos);
+    printf("Foram %d clientes impacientes, e %d clientes pacientes\n", caras_impacientes, caras_pacientes);
     printf("A taxa de satisfacao total foi igual a %f%%\n", taxa);
 }
 
@@ -180,7 +193,8 @@ void* recepcao(void* args){
     FilaCliente* fila = rec_args->fila;
     int num_clientes = rec_args->num_clientes;
     pid_t pid_atendente = rec_args->pid_atendente;
-    clock_t inicio_programa = rec_args->inicio_programa;
+    struct timespec inicio_programa = rec_args->inicio_programa;
+    
 
     printf("Comecou a thread recepcao\n");
     sem_t* sem_atend =  sem_open("/sem_atend", O_CREAT, 0644, 1);   
@@ -192,39 +206,24 @@ void* recepcao(void* args){
 
     int i = 0;
     
-    // colocar o negocio para receber a tecla s e parar a criacao de clientes quando for 0
+
     while ((num_clientes == 0) || (i < num_clientes)){
-
-
-
         //criar processos cliente
         
         pid_t pid_cliente = fork();
-
-
         i ++;
 
         if (pid_cliente < 0){
-
             printf("Não criou cliente\n");
             exit(EXIT_FAILURE);
         }
 
         else if(pid_cliente == 0){
-           // sem_wait(sem_demanda);  // Bloqueia o acesso ao demanda.txt
-
-            //int pid_cliente = getpid();
-            // printf("pid do cliente %d: %d\n", i, pid_cliente);
-            //printf("Cliente %d criado!\n", i);
-            // pode ate dar um sem_wait no sem_demanda aqui, mas quando a gente vai abrir? 
-            // as linhas abaixo do exec nunca sao executadas, ele precisaria abrir no cliente? 
-
+            // processo filho vira um processo cliente
             if (execl("./cliente", "cliente", (char *)NULL) == -1) {
                 perror("Erro ao executar cliente");
                 exit(EXIT_FAILURE);
             }
-
-            //sem_post(sem_demanda); 
             
         } else {
             // Processo pai
@@ -236,19 +235,19 @@ void* recepcao(void* args){
             if (podeparar == true){
                 break;
             }
+            
             /*gerar prioridade
-            0: prioridade alta
-            1: prioridade baixa
+            0: prioridade baixa
+            1: prioridade alta
             */
             
-            //usleep(10000);
+
             int status;
             waitpid(pid_cliente, &status, WUNTRACED);
 
             int prioridade_cliente = rand() % 2;
             //entra na fila
             int tempo_atendimento;
-            // ficar num laço esperando que o processo cliente durma
             
             FILE* demanda = fopen("demanda.txt", "r");
             if (demanda == NULL) {
@@ -263,16 +262,19 @@ void* recepcao(void* args){
                 exit(EXIT_FAILURE);
             }
             fclose(demanda);
+
             //printf("Voltei para o atendimento, apos fechar o demanda!\n");
             //printf("Tempo de atendimento, que eu peguei do demanda.txt: %d\n", tempo_atendimento);
-            clock_t tempo_atual = clock();
+
+            struct timespec tempo_atual;
+            clock_gettime(CLOCK_REALTIME, &tempo_atual);
             //printf("pid_cliente: %d \n",pid_cliente);
-            double tempo_decorrido = (double)(tempo_atual - inicio_programa) / CLOCKS_PER_SEC;
-            // tempo decorrido esta em segundos, converter para microsegundos
-            
-            tempo_decorrido = tempo_decorrido * 1000000;
+            double tempo_decorrido = (tempo_atual.tv_sec - inicio_programa.tv_sec)* 1e6 +
+                                     (tempo_atual.tv_nsec - inicio_programa.tv_nsec) / 1e3;
+            //printf("O tempo na recepcao eh %f \n", tempo_decorrido);
+            //tempo_decorrido = tempo_decorrido * 1000000;
             cliente c;
-            c.hora_chegada = (int)tempo_decorrido * 2;
+            c.hora_chegada = (int)tempo_decorrido;
             c.pid = pid_cliente;
             c.prioridade = prioridade_cliente;
             c.tempo_atendimento = tempo_atendimento;
@@ -283,9 +285,7 @@ void* recepcao(void* args){
             if(sem_fila != SEM_FAILED) sem_post(sem_fila);
            
             //printf("Cliente %d adicionado na fila\n", pid_cliente);
-
         }
-        
         }
         podeparar = true;
 }
@@ -315,10 +315,14 @@ int main(int argc, char *argv[]){
     if (num_clientes<0) return 0;
     // a tolerancia esta medida em milisegundos
     int paciencia = atoi(argv[2]);
-    paciencia = paciencia; // agora esta em microsegundos 
-    clock_t inicio_programa = clock();
+    if (num_clientes == 0) printf("O numero de clientes é indefinido\n"); 
+    else printf("Numero de clientes %d\n", num_clientes);
+    printf("A paciencia maxima dos clientes eh %d e a minima eh %d\n", paciencia, paciencia/2);
+    //clock_t inicio_programa = clock();
+    struct timespec inicio_programa;
+    clock_gettime(CLOCK_REALTIME, &inicio_programa);
 
-    printf("Numero de clientes %d\n", num_clientes);
+
 
     pthread_t thread_atendente, thread_recepcao, thread_pare;
 
@@ -346,9 +350,14 @@ int main(int argc, char *argv[]){
     sem_unlink("/sem_block");
     sem_unlink("/sem_fila");
 
-    clock_t final_programa = clock();
-    double tempo_total = ((double)final_programa - inicio_programa)/CLOCKS_PER_SEC;
+    //clock_t final_programa = clock();
+    //double tempo_total = ((double)final_programa - inicio_programa)/CLOCKS_PER_SEC;
     //tempo_total = tempo_total * 1000; //para virar ms
+    struct timespec final_programa;
+    clock_gettime(CLOCK_REALTIME, &final_programa);
+    double tempo_total = ((final_programa.tv_sec - inicio_programa.tv_sec) +
+                         (final_programa.tv_nsec - inicio_programa.tv_nsec) / 1e9);
+
     printf("O tempo de execucao total foi igual a %f s \n", tempo_total*2);
     return 0;
 }
