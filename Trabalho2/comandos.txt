@@ -1,0 +1,11 @@
+
+dd if=/dev/zero of=Sist.img bs=1M count=1024
+mkfs.ext4 Sist.img
+
+sudo mkdir /mnt/Sist
+sudo mount -o loop Sist.img /mnt/Sist
+
+ls /mnt/Sist
+
+sudo umount /mnt/Sist
+rm Sist.img
