@@ -18,12 +18,15 @@ void parser(const char *str){
         printf("criar\n");
         printf("%s \n", segundaPalavra);
         printf("%s \n", terceiraPalavra);
-        //criarArquivo(segundaPalavra, tamanho);
+        criarArquivo(segundaPalavra, tamanho);
+        
+        criarArquivo(segundaPalavra, tamanho);
     }
     else if (strcmp(primeiraPalavra, "apagar") == 0) {
         printf("apagar\n");
         printf("%s \n", segundaPalavra);
-        //apagarArquivo(segundaPalavra);
+        
+        apagarArquivo(segundaPalavra);
     }
 
     else if (strcmp(primeiraPalavra, "listar") == 0){
@@ -50,6 +53,10 @@ void parser(const char *str){
         printf("%s \n", segundaPalavra);
         printf("%s \n", terceiraPalavra);
         //ordernarArquivo(segundaPalavra);
+    }
+
+    else if (strcmp(primeiraPalavra, "exit") == 0){
+        //sair do programa
     }
 }
 
