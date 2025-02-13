@@ -6,8 +6,7 @@
 
 // funcoes para executar as ações depois de receber o que deve ser feito pelo parser
 
-//const char *caminho_virtual = "mnt/Sis";
-const char *caminho_virtual = "teste";
+const char *caminho_virtual = "/mnt/Sist";
 
 void criarArquivo(char nome[20], int tam){
 /*Cria um arquivo com nome "nome" (pode ser limitado o tamanho do nome) com uma lista aleatória de números inteiros positivos de 32 bits. 
@@ -29,9 +28,8 @@ separados por algum separador, como vírgula ou espaço).
       uint32_t num = ((uint32_t)random() << 16) | (random() & 0xFFFF);
       fprintf(arquivoNovo, "%u%s", num, (i < tam - 1) ? "," : "");  
    }
- 
    fclose(arquivoNovo);
-   
+   printf("Arquivo %s criado!\n", nome);
 }
 
 void apagarArquivo(char nome[20]){
@@ -62,10 +60,114 @@ void lerArquivo(char nome[20], int inicio, int fim){
    char caminho_completo[256];
    snprintf(caminho_completo, sizeof(caminho_completo), "%s/%s", caminho_virtual, nome);
    
+   if (inicio <0 || fim < inicio){
+      printf("Erro nos intervalos inseridos\n");
+      return;
+   }
+
+   uint32_t *intervalo = NULL; // vetor para guardar os valores que estao dentro do intervalo pedido
+
+   FILE *arquivo = fopen(caminho_completo, "r");
+   if (arquivo == NULL) {
+      perror("Erro ao ler o arquivo");
+      return;
+   }
+
+   char saida[1024];
+   int indiceSaida = 0;
+   char caracter;
+   int indiceAtual = 0;
+   // int dentroIntervalo = 0;
+
+   while ((caracter = fgetc(arquivo)) !=EOF){
+      if (indiceAtual >= inicio && indiceAtual <= fim){
+         saida[indiceSaida++] = caracter;
+         //dentroIntervalo = 1;  
+      }   
+      
+      if (caracter == ','){
+         indiceAtual ++;
+         if (indiceAtual >fim){
+            break;
+         }
+      }
+   }
+   fclose(arquivo);
+   if (indiceAtual < fim){
+      printf("Fim maior que o tamanho do arquivo, inserir intervalo valido!\n");
+      return;
+   }
+   saida[indiceSaida] = '\0';  // Finaliza a string corretamente
+   printf("%s\n", saida);  // Exibe a saída somente no final
 }
 
 void concaternarArquivos(char nome1[20], char nome2[20]){
  /* Concatena dois arquivos com os nomes dados de argumento. O arquivo concatenado pode ter um novo nome predeterminado ou simplesmente 
  pode assumir o nome do primeiro arquivo. Os arquivos originais devem deixar de existir.
  */
+   char caminho_completo1[256];
+   snprintf(caminho_completo1, sizeof(caminho_completo1), "%s/%s", caminho_virtual, nome1);
+   
+   char caminho_completo2[256];
+   snprintf(caminho_completo2, sizeof(caminho_completo2), "%s/%s", caminho_virtual, nome2);
+   
+   FILE *f1 = fopen(caminho_completo1, "r");
+   FILE *f2 = fopen(caminho_completo2, "r");
+
+   if (f1 == NULL || f2 == NULL) {
+       printf("Erro ao abrir os arquivos!\n");
+       return;
+   }
+
+   // Move o ponteiro do arquivo para o final pra saber o tamanho
+   fseek(f1, 0, SEEK_END);
+   long size1 = ftell(f1);
+   rewind(f1);  
+
+   fseek(f2, 0, SEEK_END);
+   long size2 = ftell(f2);
+   rewind(f2);
+
+   // Aloca memoria suficiente pra armazenar tudo
+   char *content1 = malloc(size1 + 1);
+   char *content2 = malloc(size2 + 1);
+
+   if (content1 == NULL || content2 == NULL) {
+       printf("Erro ao alocar memoria!\n");
+       fclose(f1);
+       fclose(f2);
+       return;
+   }
+
+   // Le o conteudo dos arquivos
+   fread(content1, 1, size1, f1);
+   fread(content2, 1, size2, f2);
+
+   content1[size1] = '\0';  
+   content2[size2] = '\0';  
+
+   fclose(f1);
+   fclose(f2);
+
+   // Remove os dois arquivos antes de criar o novo
+   remove(caminho_completo1);
+   remove(caminho_completo2);
+
+   // Cria um novo arquivo com o nome do primeiro
+   f1 = fopen(caminho_completo1, "w");
+   if (f1 == NULL) {
+       printf("Erro ao criar o novo arquivo!\n");
+       free(content1);
+       free(content2);
+       return;
+   }
+
+   // Escreve os conteudos concatenados
+   fprintf(f1, "%s,%s", content1, content2);
+   fclose(f1);
+
+   printf("Novo arquivo '%s' criado com sucesso!\n", nome1);
+
+   free(content1);
+   free(content2);
 }
