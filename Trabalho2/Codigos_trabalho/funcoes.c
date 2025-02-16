@@ -2,11 +2,52 @@
 #include <stdio.h>
 #include <time.h>
 #include <stdint.h>
+#include <sys/stat.h>
+#include <string.h>
+#include <unistd.h>
+#include <dirent.h>
 #include "funcoes.h"
 
 // funcoes para executar as ações depois de receber o que deve ser feito pelo parser
 
-const char *caminho_virtual = "/mnt/Sist";
+#define TAMANHO_DISCO_MB 1024
+#define CAMINHO_DISCO "Sist.img"
+#define PONTO_MONTAGEM "/mnt/Sist"
+
+void criarDisco() {
+   // Criar o arquivo do disco virtual
+   char comando[512];
+   // criar o disco, tipo aquele da aula
+   snprintf(comando, sizeof(comando), "dd if=/dev/zero of=%s bs=1M count=%d", CAMINHO_DISCO, TAMANHO_DISCO_MB);
+   system(comando);
+   //formatar o sistema de arquivoos
+   snprintf(comando, sizeof(comando), "mkfs.ext2 %s", CAMINHO_DISCO);
+   system(comando);
+   // criar o diretorio para o sistema de arquivos
+   snprintf(comando, sizeof(comando), "mkdir -p %s", PONTO_MONTAGEM);
+   system(comando);
+   // 
+   snprintf(comando, sizeof(comando), "sudo mount -o loop %s %s", CAMINHO_DISCO, PONTO_MONTAGEM);
+   system(comando);
+
+   // ajustar permissões para permitir escrita pelo usuário atual, isso aqui tinha dado problema antes entao foi adicionado
+   snprintf(comando, sizeof(comando), "sudo chown $USER:$USER %s", PONTO_MONTAGEM);
+   system(comando);
+   printf("Disco criado e montado em %s\n", PONTO_MONTAGEM);
+}
+   
+void excluirDisco(){
+   char comando[512];
+
+   snprintf(comando, sizeof(comando), "sudo umount %s", PONTO_MONTAGEM);
+   system(comando);
+
+   snprintf(comando, sizeof(comando), "rm -f %s", CAMINHO_DISCO);
+   system(comando);
+
+   printf("Disco desmontado e excluído.\n");
+
+}
 
 void criarArquivo(char nome[20], int tam){
 /*Cria um arquivo com nome "nome" (pode ser limitado o tamanho do nome) com uma lista aleatória de números inteiros positivos de 32 bits. 
@@ -14,7 +55,7 @@ O argumento "tam" indica a quantidade de números. A lista pode ser guardada em 
 separados por algum separador, como vírgula ou espaço).
 */
    char caminho_completo[256];
-   snprintf(caminho_completo, sizeof(caminho_completo), "%s/%s", caminho_virtual, nome);
+   snprintf(caminho_completo, sizeof(caminho_completo), "%s/%s", PONTO_MONTAGEM, nome);
 
    FILE *arquivoNovo = fopen(caminho_completo, "w");
    if (arquivoNovo == NULL) {
@@ -35,7 +76,7 @@ separados por algum separador, como vírgula ou espaço).
 void apagarArquivo(char nome[20]){
  // Apaga o arquivo com o nome passado no argumento.
    char caminho_completo[256];
-   snprintf(caminho_completo, sizeof(caminho_completo), "%s/%s", caminho_virtual, nome);
+   snprintf(caminho_completo, sizeof(caminho_completo), "%s/%s", PONTO_MONTAGEM, nome);
    if (remove(caminho_completo) == 0)
       printf("Arquivo removido\n");
    else
@@ -43,10 +84,47 @@ void apagarArquivo(char nome[20]){
  
 }
 
+long pegarTamanho(const char *caminhoArquivo){
+   struct stat st;
+   if (stat(caminhoArquivo, &st) == 0){
+      return st.st_size;
+   }
+   else{
+      perror("Erro ao obter informações do arquivo");
+      return -1;
+    }
+}
+
 void listarDiretorio(){
  /* Lista os arquivos no diretório. Deve mostrar, ao lado de cada arquivo, o seu tamanho em bytes. Ao final, deve mostrar também o espaço 
  total do "disco" e o espaço disponível.
  */ 
+
+   struct dirent *entrada;  
+   DIR *diretorio = opendir(PONTO_MONTAGEM);
+   long tamanhoTotal = 0;
+   if (diretorio == NULL){
+      perror("Error ao abrir diretorio");
+      return;
+   }
+   while ((entrada = readdir(diretorio)) != NULL){
+      if (entrada->d_name[0] == '.' || strcmp(entrada->d_name, "lost+found") == 0) {
+         continue;
+      }
+
+      char caminhoCompleto[1024];
+
+      snprintf(caminhoCompleto, sizeof(caminhoCompleto), "%s/%s", PONTO_MONTAGEM, entrada->d_name);
+      long tamanho = pegarTamanho(caminhoCompleto);
+      if (tamanho != -1){
+         printf("%s: %ld bytes\n", entrada->d_name, tamanho);
+         tamanhoTotal += tamanho;
+      }
+   }
+   closedir(diretorio);
+   long restante = TAMANHO_DISCO_MB - tamanhoTotal;
+   printf("Total ocupado: %ld\n", tamanhoTotal);
+   printf("Espaco livre de disco: %ld\n", restante);  
 }
 
 void ordernarArquivo(char nome[20]){
@@ -58,7 +136,7 @@ void ordernarArquivo(char nome[20]){
 void lerArquivo(char nome[20], int inicio, int fim){
 //Exibe a sublista de um arquivo com o nome passado com o argumento. O intervalo da lista é dado pelos argumentos inicio e fim.
    char caminho_completo[256];
-   snprintf(caminho_completo, sizeof(caminho_completo), "%s/%s", caminho_virtual, nome);
+   snprintf(caminho_completo, sizeof(caminho_completo), "%s/%s", PONTO_MONTAGEM, nome);
    
    if (inicio <0 || fim < inicio){
       printf("Erro nos intervalos inseridos\n");
@@ -106,10 +184,10 @@ void concaternarArquivos(char nome1[20], char nome2[20]){
  pode assumir o nome do primeiro arquivo. Os arquivos originais devem deixar de existir.
  */
    char caminho_completo1[256];
-   snprintf(caminho_completo1, sizeof(caminho_completo1), "%s/%s", caminho_virtual, nome1);
+   snprintf(caminho_completo1, sizeof(caminho_completo1), "%s/%s", PONTO_MONTAGEM, nome1);
    
    char caminho_completo2[256];
-   snprintf(caminho_completo2, sizeof(caminho_completo2), "%s/%s", caminho_virtual, nome2);
+   snprintf(caminho_completo2, sizeof(caminho_completo2), "%s/%s", PONTO_MONTAGEM, nome2);
    
    FILE *f1 = fopen(caminho_completo1, "r");
    FILE *f2 = fopen(caminho_completo2, "r");

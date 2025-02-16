@@ -1,10 +1,12 @@
 #include <stdlib.h>
 #include <stdio.h>
-#include "funcoes.h"
 #include <string.h>
 
+#include "funcoes.h"
+
+
 int parser(const char *str){
-    char copiaStr[100]; // Cria uma cópia da string para não modificar a original
+    char copiaStr[100];
     strcpy(copiaStr, str);
 
     char *primeiraPalavra = strtok(copiaStr, " ");
@@ -15,21 +17,16 @@ int parser(const char *str){
     if (strcmp(primeiraPalavra, "criar") == 0) {
         // converter terceira palavra para int
         int tamanho = atoi(terceiraPalavra);
-        //printf("criar\n");
-        //printf("%s \n", segundaPalavra);
-        //printf("%s \n", terceiraPalavra);
+
         criarArquivo(segundaPalavra, tamanho);
     }
     else if (strcmp(primeiraPalavra, "apagar") == 0) {
-        //printf("apagar\n");
-        //printf("%s \n", segundaPalavra);
         
         apagarArquivo(segundaPalavra);
     }
 
     else if (strcmp(primeiraPalavra, "listar") == 0){
-        //printf("listar\n");
-        //listarDiretorio();
+        listarDiretorio();
     }
 
     else if (strcmp(primeiraPalavra, "ordenar") == 0){
@@ -45,13 +42,10 @@ int parser(const char *str){
     }
     
     else if (strcmp(primeiraPalavra, "concatenar") == 0){
-        //printf("concaternar\n");
-        //printf("%s \n", segundaPalavra);
-        //printf("%s \n", terceiraPalavra);
         concaternarArquivos(segundaPalavra, terceiraPalavra);
     }
 
-    else if (strcmp(primeiraPalavra, "exit") == 0){
+    else if (strcmp(primeiraPalavra, "sair") == 0){
         return -1;
         //sair do programa
     }
@@ -61,6 +55,7 @@ int parser(const char *str){
 //criar exit depois
 
 int main(){
+    criarDisco();
     char str[100]; // Buffer para armazenar a string digitada pelo usuário
     int p = 1;
     while (p == 1) { 
@@ -72,5 +67,6 @@ int main(){
         str[strcspn(str, "\n")] = '\0'; // Remove o '\n' do final da string
         p = parser(str);
     }
+    excluirDisco();
     return 0;
 }
