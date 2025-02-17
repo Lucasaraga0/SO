@@ -20,6 +20,12 @@ int parser(const char *str){
 
         criarArquivo(segundaPalavra, tamanho);
     }
+    else if (strcmp(primeiraPalavra, "montar") == 0){
+        criarDisco();
+    }
+    else if(strcmp(primeiraPalavra, "desmontar") == 0){
+        excluirDisco();
+    }
     else if (strcmp(primeiraPalavra, "apagar") == 0) {
         
         apagarArquivo(segundaPalavra);
@@ -55,7 +61,7 @@ int parser(const char *str){
 //criar exit depois
 
 int main(){
-    criarDisco();
+    //criarDisco();
     char str[100]; // Buffer para armazenar a string digitada pelo usuário
     int p = 1;
     while (p == 1) { 
@@ -67,6 +73,6 @@ int main(){
         str[strcspn(str, "\n")] = '\0'; // Remove o '\n' do final da string
         p = parser(str);
     }
-    excluirDisco();
+    //excluirDisco();
     return 0;
 }

@@ -122,9 +122,9 @@ void listarDiretorio(){
       }
    }
    closedir(diretorio);
-   long restante = TAMANHO_DISCO_MB - tamanhoTotal;
-   printf("Total ocupado: %ld\n", tamanhoTotal);
-   printf("Espaco livre de disco: %ld\n", restante);  
+   long restante = TAMANHO_DISCO_MB*1024 - tamanhoTotal;
+   printf("Total ocupado: %ld bytes\n", tamanhoTotal);
+   printf("Espaco livre de disco: %ld MB\n", restante/1024);  
 }
 
 void ordernarArquivo(char nome[20]){
@@ -171,7 +171,7 @@ void lerArquivo(char nome[20], int inicio, int fim){
       }
    }
    fclose(arquivo);
-   if (indiceAtual < fim){
+   if (indiceAtual < fim){ 
       printf("Fim maior que o tamanho do arquivo, inserir intervalo valido!\n");
       return;
    }
