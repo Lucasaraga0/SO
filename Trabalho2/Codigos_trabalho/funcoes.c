@@ -8,123 +8,282 @@
 #include <dirent.h>
 #include "funcoes.h"
 
-// funcoes para executar as ações depois de receber o que deve ser feito pelo parser
-
 #define TAMANHO_DISCO_MB 1024
+#define TAMANHO_BLOCO 4096
+#define TOTAL_BLOCOS (TAMANHO_DISCO_MB * 1024 * 1024 / TAMANHO_BLOCO)
 #define CAMINHO_DISCO "Sist.img"
-#define PONTO_MONTAGEM "/mnt/Sist"
+#define MAX_ARQUIVOS 128
+
+typedef struct {
+   uint32_t total_blocos;
+   uint32_t tamanho_bloco;
+   uint8_t bitmap[TOTAL_BLOCOS / 8];  // Bitmap de blocos livres
+   uint32_t tabela_alocacao[TOTAL_BLOCOS];  // Tabela de encadeamento de blocos
+} Superbloco;
+
+
+typedef struct {
+   char nome[32];
+   uint32_t bloco_inicial;
+   uint32_t tamanho;  // Tamanho real do arquivo (em bytes)
+   uint8_t usado;
+} Diretorio;
+
+Diretorio diretorios[MAX_ARQUIVOS];
+
+void inicializarSistemaArquivos() {
+    FILE *disco = fopen(CAMINHO_DISCO, "rb+");
+    if (!disco) {
+        perror("Erro ao abrir o disco virtual");
+        exit(1);
+    }
+
+    Superbloco sb;
+    memset(&sb, 0, sizeof(Superbloco));
+    sb.total_blocos = TOTAL_BLOCOS;
+    sb.tamanho_bloco = TAMANHO_BLOCO;
+    
+    // Marcar o primeiro bloco como ocupado para o superbloco
+    sb.bitmap[0] = 0x01;
+    
+    // Inicializar a Tabela de Alocação de Blocos (TAB)
+    for (int i = 0; i < TOTAL_BLOCOS; i++) {
+        sb.tabela_alocacao[i] = 0xFFFFFFFF;  // Nenhum bloco encadeado no início
+    }
+
+    // Inicializar estrutura de diretórios
+    memset(diretorios, 0, sizeof(diretorios));
+    strcpy(diretorios[0].nome, "/");
+    diretorios[0].bloco_inicial = 1;
+    diretorios[0].usado = 1;
+
+    // Escrever o superbloco e diretórios no disco
+    fseek(disco, 0, SEEK_SET);
+    fwrite(&sb, sizeof(Superbloco), 1, disco);
+    fwrite(diretorios, sizeof(diretorios), 1, disco);
+    fflush(disco);
+    fclose(disco);
+
+    printf("Sistema de arquivos inicializado em %s\n", CAMINHO_DISCO);
+}
 
 void criarDisco() {
-   // Criar o arquivo do disco virtual
    char comando[512];
-   // criar o disco, tipo aquele da aula
+
+   // Criar o arquivo do disco virtual
    snprintf(comando, sizeof(comando), "dd if=/dev/zero of=%s bs=1M count=%d", CAMINHO_DISCO, TAMANHO_DISCO_MB);
    system(comando);
-   //formatar o sistema de arquivoos
-   snprintf(comando, sizeof(comando), "mkfs.ext2 %s", CAMINHO_DISCO);
-   system(comando);
-   // criar o diretorio para o sistema de arquivos
-   snprintf(comando, sizeof(comando), "mkdir -p %s", PONTO_MONTAGEM);
-   system(comando);
-   // 
-   snprintf(comando, sizeof(comando), "sudo mount -o loop %s %s", CAMINHO_DISCO, PONTO_MONTAGEM);
+
+   // Ajustar permissões para garantir que o usuário atual tenha permissão de escrita
+   snprintf(comando, sizeof(comando), "sudo chown $USER:$USER %s", CAMINHO_DISCO);
    system(comando);
 
-   // ajustar permissões para permitir escrita pelo usuário atual, isso aqui tinha dado problema antes entao foi adicionado
-   snprintf(comando, sizeof(comando), "sudo chown $USER:$USER %s", PONTO_MONTAGEM);
+   snprintf(comando, sizeof(comando), "chmod 666 %s", CAMINHO_DISCO);  // Permitir leitura e escrita para o usuário atual
    system(comando);
-   printf("Disco criado e montado em %s\n", PONTO_MONTAGEM);
-}
+
+   // Inicializar sistema de arquivos próprio
+   inicializarSistemaArquivos();
    
+   printf("Disco criado e sistema de arquivos inicializado.\n");
+}
+
 void excluirDisco(){
    char comando[512];
-
-   snprintf(comando, sizeof(comando), "sudo umount %s", PONTO_MONTAGEM);
-   system(comando);
-
    snprintf(comando, sizeof(comando), "rm -f %s", CAMINHO_DISCO);
    system(comando);
-
    printf("Disco desmontado e excluído.\n");
 
 }
 
+
 void criarArquivo(char nome[20], int tam){
-/*Cria um arquivo com nome "nome" (pode ser limitado o tamanho do nome) com uma lista aleatória de números inteiros positivos de 32 bits. 
-O argumento "tam" indica a quantidade de números. A lista pode ser guardada em formato binário ou como string (lista de números legíveis
-separados por algum separador, como vírgula ou espaço).
-*/
-   char caminho_completo[256];
-   snprintf(caminho_completo, sizeof(caminho_completo), "%s/%s", PONTO_MONTAGEM, nome);
-
-   FILE *arquivoNovo = fopen(caminho_completo, "w");
-   if (arquivoNovo == NULL) {
-      perror("Erro ao criar o arquivo");
+   FILE *disco = fopen(CAMINHO_DISCO, "rb+");
+   if (!disco){
+      perror("Erro ao abrir o disco virtual\n");
+      return;
    }
 
+   Superbloco sb;
+   fseek(disco, 0, SEEK_SET);
+   fread(&sb, sizeof(Superbloco), 1, disco);
+
+   //checar se ja tem um cara com esse nome no diretorio
+   for (int i = 0; i < MAX_ARQUIVOS; i++) {
+      if (diretorios[i].usado && strcmp(diretorios[i].nome, nome) == 0) {
+          printf("Erro: Já existe um arquivo com o nome '%s'.\n", nome);
+          fclose(disco);
+          return;
+      }
+  }  
+
+   // cada bloco tem 4KB, entao p saber quanto um bloco ocupa precisa calcular antes
+   int blocos_necessarios = (tam*sizeof(uint32_t) + TAMANHO_BLOCO - 1)/TAMANHO_BLOCO;
+
+   // encontrar onde tem bloco livre 
+   int blocos_arquivo[blocos_necessarios];
+   int blocos_encontrados = 0;
+   for (int i =0; i <TOTAL_BLOCOS && blocos_encontrados < blocos_necessarios; i++){
+      if (!(sb.bitmap[i/8]  & (1 <<(i%8)))){
+         blocos_arquivo[blocos_encontrados++] = i;
+         sb.bitmap[i/8] |= (1<< (i%8)); //marcar no bitmap que o bloco ta ocupado 
+      }
+   }
+
+   if (blocos_encontrados<blocos_necessarios){
+      printf("Sem espaco.\n");
+      fclose(disco);
+      return;
+   }
+
+   for(int i =0; i <blocos_necessarios-1;i++){
+      sb.tabela_alocacao[blocos_arquivo[i]] = blocos_arquivo[i+1];
+   }
+   sb.tabela_alocacao[blocos_arquivo[blocos_necessarios-1]] = 0xFFFFFFFF;
+
+   fseek(disco, sizeof(Superbloco), SEEK_SET);
+   fread(diretorios, sizeof(diretorios), 1, disco);
+
+   int indice_dir = -1;
+   for (int i = 0; i < MAX_ARQUIVOS; i++) {
+       if (!diretorios[i].usado) {  // Encontrar espaço livre
+           indice_dir = i;
+           break;
+       }
+   }
+
+   if (indice_dir == -1) {
+       printf("Erro: Número máximo de arquivos atingido.\n");
+       fclose(disco);
+       return;
+   }
+   
+   strcpy(diretorios[indice_dir].nome, nome);
+   diretorios[indice_dir].bloco_inicial = blocos_arquivo[0];
+   diretorios[indice_dir].tamanho = tam*sizeof(uint32_t);
+   diretorios[indice_dir].usado = 1;
+
+   // Escrever números aleatórios nos blocos alocados
    srandom(time(NULL));
-
-   // gerar e escrever números aleatórios no arquivo
-   for (int i = 0; i < tam; i++) {
-      uint32_t num = ((uint32_t)random() << 16) | (random() & 0xFFFF);
-      fprintf(arquivoNovo, "%u%s", num, (i < tam - 1) ? "," : "");  
+   int total_numeros = tam; // Escrever exatamente 'tam' números aleatórios
+   for (int i = 0; i < blocos_necessarios; i++) {
+      fseek(disco, blocos_arquivo[i] * TAMANHO_BLOCO, SEEK_SET);
+      for (int j = 0; j < TAMANHO_BLOCO / sizeof(uint32_t) && total_numeros > 0; j++) {
+         uint32_t num = (uint32_t)random();
+         printf("%u, ", num);
+         fwrite(&num, sizeof(uint32_t), 1, disco);
+         total_numeros--;
+         if (total_numeros == 0) {
+            printf("\n");
+            break;
+         }
+      }
+      if (total_numeros == 0) {
+         printf("\n");
+         break;
+      }
    }
-   fclose(arquivoNovo);
-   printf("Arquivo %s criado!\n", nome);
+
+   for (int i = 0; i < TOTAL_BLOCOS; i++) {
+      if (sb.tabela_alocacao[i] != 0xFFFFFFFF) {
+          printf("Bloco %d -> %d\n", i, sb.tabela_alocacao[i]);
+      }
+  }
+  
+   fseek(disco,0,SEEK_SET);
+   fwrite(&sb, sizeof(Superbloco), 1, disco);
+   fwrite(diretorios, sizeof(diretorios), 1, disco);
+
+   fclose(disco);
+   printf("Arquivo %s criado com sucesso!\n", nome);
 }
 
 void apagarArquivo(char nome[20]){
- // Apaga o arquivo com o nome passado no argumento.
-   char caminho_completo[256];
-   snprintf(caminho_completo, sizeof(caminho_completo), "%s/%s", PONTO_MONTAGEM, nome);
-   if (remove(caminho_completo) == 0)
-      printf("Arquivo removido\n");
-   else
-      printf("nao deu certo :(\n");
- 
-}
-
-long pegarTamanho(const char *caminhoArquivo){
-   struct stat st;
-   if (stat(caminhoArquivo, &st) == 0){
-      return st.st_size;
+   FILE *disco = fopen(CAMINHO_DISCO, "rb+");
+   if (!disco){
+      perror("Erro ao abrir o disco virtual\n");
+      return;
    }
-   else{
-      perror("Erro ao obter informações do arquivo");
-      return -1;
-    }
+
+   Superbloco sb;
+   fseek(disco, 0, SEEK_SET);
+   fread(&sb, sizeof(Superbloco), 1, disco);
+
+   fseek(disco, sizeof(Superbloco), SEEK_SET);
+   fread(diretorios, sizeof(diretorios), 1, disco);
+
+   // encontrar o arquivo no diretorio 
+
+   int indice_dir = -1;
+   for (int i =0; i<MAX_ARQUIVOS; i++){
+      if (diretorios[i].usado && strcmp(diretorios[i].nome, nome) == 0){
+         indice_dir = i;
+         break;
+      }
+   }
+
+   if (indice_dir == -1){
+      printf("Arquivo %s nao encontrado.\n", nome);
+      fclose(disco);
+      return;
+   }
+   
+   uint32_t bloco_atual = diretorios[indice_dir].bloco_inicial;
+   
+   while (bloco_atual != 0xFFFFFFFF) {
+      // Liberar o bloco no bitmap
+      sb.bitmap[bloco_atual / 8] &= ~(1 << (bloco_atual % 8));
+
+      // Passar para o próximo bloco
+      uint32_t proximo_bloco = sb.tabela_alocacao[bloco_atual];
+      bloco_atual = proximo_bloco;
+  }
+   
+   diretorios[indice_dir].usado = 0;
+   // Atualizar superbloco e diretórios no disco
+   fseek(disco, 0, SEEK_SET);
+   fwrite(&sb, sizeof(Superbloco), 1, disco);
+   fwrite(diretorios, sizeof(diretorios), 1, disco);
+
+   fclose(disco);
+   printf("Arquivo %s apagado com sucesso!\n", nome);   
 }
 
 void listarDiretorio(){
- /* Lista os arquivos no diretório. Deve mostrar, ao lado de cada arquivo, o seu tamanho em bytes. Ao final, deve mostrar também o espaço 
- total do "disco" e o espaço disponível.
- */ 
 
-   struct dirent *entrada;  
-   DIR *diretorio = opendir(PONTO_MONTAGEM);
-   long tamanhoTotal = 0;
-   if (diretorio == NULL){
-      perror("Error ao abrir diretorio");
+   FILE *disco = fopen(CAMINHO_DISCO, "rb+");
+   if (!disco){
+      perror("Erro ao abrir o disco virtual\n");
       return;
    }
-   while ((entrada = readdir(diretorio)) != NULL){
-      if (entrada->d_name[0] == '.' || strcmp(entrada->d_name, "lost+found") == 0) {
-         continue;
+
+   Superbloco sb;
+   fseek(disco, 0, SEEK_SET);
+   fread(&sb, sizeof(Superbloco), 1, disco);
+
+   fseek(disco, sizeof(Superbloco), SEEK_SET);
+   fread(diretorios, sizeof(diretorios), 1, disco);
+
+   long tamanhoTotal = 0;
+
+   for (int i=0; i < MAX_ARQUIVOS; i ++){
+      if (diretorios[i].usado && strcmp(diretorios[i].nome, "/") != 0){
+         uint32_t bloco_atual = diretorios[i].bloco_inicial;
+         long tamanhoArquivo = 0;
+      
+      while (bloco_atual != 0xFFFFFFFF){
+         tamanhoArquivo += sb.tamanho_bloco;
+         uint32_t proximoBloco = sb.tabela_alocacao[bloco_atual];
+         bloco_atual = proximoBloco;
       }
-
-      char caminhoCompleto[1024];
-
-      snprintf(caminhoCompleto, sizeof(caminhoCompleto), "%s/%s", PONTO_MONTAGEM, entrada->d_name);
-      long tamanho = pegarTamanho(caminhoCompleto);
-      if (tamanho != -1){
-         printf("%s: %ld bytes\n", entrada->d_name, tamanho);
-         tamanhoTotal += tamanho;
+      printf("%s: %ld bytes\n", diretorios[i].nome, tamanhoArquivo);
+      tamanhoTotal += tamanhoArquivo;
       }
    }
-   closedir(diretorio);
+
    long restante = TAMANHO_DISCO_MB*1024 - tamanhoTotal;
    printf("Total ocupado: %ld bytes\n", tamanhoTotal);
    printf("Espaco livre de disco: %ld MB\n", restante/1024);  
+   fclose(disco);
 }
 
 void ordernarArquivo(char nome[20]){
@@ -135,48 +294,72 @@ void ordernarArquivo(char nome[20]){
 
 void lerArquivo(char nome[20], int inicio, int fim){
 //Exibe a sublista de um arquivo com o nome passado com o argumento. O intervalo da lista é dado pelos argumentos inicio e fim.
-   char caminho_completo[256];
-   snprintf(caminho_completo, sizeof(caminho_completo), "%s/%s", PONTO_MONTAGEM, nome);
    
-   if (inicio <0 || fim < inicio){
-      printf("Erro nos intervalos inseridos\n");
+FILE *disco = fopen(CAMINHO_DISCO, "rb+");
+   if (!disco) {
+      perror("Erro ao abrir o disco virtual");
       return;
    }
 
-   uint32_t *intervalo = NULL; // vetor para guardar os valores que estao dentro do intervalo pedido
+   Superbloco sb;
+   fseek(disco, 0, SEEK_SET);
+   fread(&sb, sizeof(Superbloco), 1, disco);
 
-   FILE *arquivo = fopen(caminho_completo, "r");
-   if (arquivo == NULL) {
-      perror("Erro ao ler o arquivo");
-      return;
-   }
-
-   char saida[1024];
-   int indiceSaida = 0;
-   char caracter;
-   int indiceAtual = 0;
-   // int dentroIntervalo = 0;
-
-   while ((caracter = fgetc(arquivo)) !=EOF){
-      if (indiceAtual >= inicio && indiceAtual <= fim){
-         saida[indiceSaida++] = caracter;
-         //dentroIntervalo = 1;  
-      }   
-      
-      if (caracter == ','){
-         indiceAtual ++;
-         if (indiceAtual >fim){
-            break;
-         }
+   fseek(disco, sizeof(Superbloco), SEEK_SET);
+   fread(diretorios, sizeof(diretorios), 1, disco);
+   
+   int indice_dir = -1;
+   for (int i = 0; i < MAX_ARQUIVOS; i++) {
+      if (diretorios[i].usado && strcmp(diretorios[i].nome, nome) == 0) {
+         indice_dir = i;
+         break;
       }
    }
-   fclose(arquivo);
-   if (indiceAtual < fim){ 
-      printf("Fim maior que o tamanho do arquivo, inserir intervalo valido!\n");
+
+   if (indice_dir == -1) {
+      printf("Arquivo não encontrado.\n");
+      fclose(disco);
       return;
    }
-   saida[indiceSaida] = '\0';  // Finaliza a string corretamente
-   printf("%s\n", saida);  // Exibe a saída somente no final
+
+   // Obter o número de blocos necessários
+   int bloco_atual = diretorios[indice_dir].bloco_inicial;
+   int tamanho_arquivo = diretorios[indice_dir].tamanho;
+   int blocos_necessarios = (tamanho_arquivo + TAMANHO_BLOCO - 1) / TAMANHO_BLOCO;
+
+   if (inicio < 0 || fim >= tamanho_arquivo / sizeof(uint32_t) || inicio > fim) {
+      printf("Erro nos intervalos inseridos\n");
+      fclose(disco);
+      return;
+   }
+
+   uint32_t buffer[TAMANHO_BLOCO/sizeof(uint32_t)];
+   int numValLidos = 0;
+   int indInicial = inicio/(TAMANHO_BLOCO/sizeof(uint32_t));
+   int intFinal = fim/(TAMANHO_BLOCO/sizeof(uint32_t));
+
+   while (bloco_atual != 0xFFFFFFFF){
+      printf("Lendo bloco %d...\n", bloco_atual);
+      fseek(disco, bloco_atual*TAMANHO_BLOCO, SEEK_SET);
+      fread(buffer, sizeof(uint32_t), TAMANHO_BLOCO/sizeof(uint32_t), disco);
+
+      printf("Valores lidos do bloco %d: ", bloco_atual);
+      for (int i = 0; i < TAMANHO_BLOCO/sizeof(uint32_t); i++){
+         if (numValLidos >= inicio && numValLidos <= fim){
+            printf("%u, ", buffer[i]);
+         }         
+         numValLidos++;
+         if (numValLidos >fim){
+            printf("\n");
+            fclose(disco);
+            return;
+         }
+      }
+
+      bloco_atual = sb.tabela_alocacao[bloco_atual];
+   }
+   fclose(disco);
+
 }
 
 void concaternarArquivos(char nome1[20], char nome2[20]){
@@ -184,10 +367,10 @@ void concaternarArquivos(char nome1[20], char nome2[20]){
  pode assumir o nome do primeiro arquivo. Os arquivos originais devem deixar de existir.
  */
    char caminho_completo1[256];
-   snprintf(caminho_completo1, sizeof(caminho_completo1), "%s/%s", PONTO_MONTAGEM, nome1);
+   snprintf(caminho_completo1, sizeof(caminho_completo1), "%s/%s", CAMINHO_DISCO, nome1);
    
    char caminho_completo2[256];
-   snprintf(caminho_completo2, sizeof(caminho_completo2), "%s/%s", PONTO_MONTAGEM, nome2);
+   snprintf(caminho_completo2, sizeof(caminho_completo2), "%s/%s", CAMINHO_DISCO, nome2);
    
    FILE *f1 = fopen(caminho_completo1, "r");
    FILE *f2 = fopen(caminho_completo2, "r");
