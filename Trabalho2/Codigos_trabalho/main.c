@@ -18,37 +18,34 @@ int parser(const char *str){
         // converter terceira palavra para int
         int tamanho = atoi(terceiraPalavra);
 
-        criarArquivo(segundaPalavra, tamanho);
+        criar_arquivo(segundaPalavra, tamanho);
     }
     else if (strcmp(primeiraPalavra, "montar") == 0){
-        criarDisco();
-    }
-    else if(strcmp(primeiraPalavra, "desmontar") == 0){
-        excluirDisco();
+        inicializar_disco("Sist");
     }
     else if (strcmp(primeiraPalavra, "apagar") == 0) {
         
-        apagarArquivo(segundaPalavra);
+        apagar_arquivo(segundaPalavra);
     }
 
     else if (strcmp(primeiraPalavra, "listar") == 0){
-        listarDiretorio();
+        listar();
     }
 
     else if (strcmp(primeiraPalavra, "ordenar") == 0){
         //printf("ordenar\n");
         //printf("%s \n", segundaPalavra);
-        //ordernarArquivo(segundaPalavra);
+        ordenar_arquivos(segundaPalavra);
     }
 
     else if (strcmp(primeiraPalavra, "ler") == 0){
         int inicio = atoi(terceiraPalavra);
         int fim = atoi(quartaPalavra);
-        lerArquivo(segundaPalavra, inicio, fim);
+        ler_arquivo(segundaPalavra, inicio, fim);
     }
     
     else if (strcmp(primeiraPalavra, "concatenar") == 0){
-        concaternarArquivos(segundaPalavra, terceiraPalavra);
+        concatenar_arquivos(segundaPalavra, terceiraPalavra);
     }
 
     else if (strcmp(primeiraPalavra, "sair") == 0){
@@ -61,8 +58,9 @@ int parser(const char *str){
 //criar exit depois
 
 int main(){
+    inicializar_disco();
     //criarDisco();
-    char str[100]; // Buffer para armazenar a string digitada pelo usuário
+    char str[100]; // Buffer para armazenar a string digitada pelo usuÃ¡rio
     int p = 1;
     while (p == 1) { 
         printf("Digite um comando: ");
@@ -73,6 +71,5 @@ int main(){
         str[strcspn(str, "\n")] = '\0'; // Remove o '\n' do final da string
         p = parser(str);
     }
-    //excluirDisco();
     return 0;
 }

@@ -1,434 +1,458 @@
-#include <stdlib.h>
-#include <stdio.h>
-#include <time.h>
-#include <stdint.h>
-#include <sys/stat.h>
-#include <string.h>
-#include <unistd.h>
-#include <dirent.h>
 #include "funcoes.h"
-
-#define TAMANHO_DISCO_MB 1024
-#define TAMANHO_BLOCO 4096
-#define TOTAL_BLOCOS (TAMANHO_DISCO_MB * 1024 * 1024 / TAMANHO_BLOCO)
-#define CAMINHO_DISCO "Sist.img"
-#define MAX_ARQUIVOS 128
-
-typedef struct {
-   uint32_t total_blocos;
-   uint32_t tamanho_bloco;
-   uint8_t bitmap[TOTAL_BLOCOS / 8];  // Bitmap de blocos livres
-   uint32_t tabela_alocacao[TOTAL_BLOCOS];  // Tabela de encadeamento de blocos
-} Superbloco;
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h> // Para uint32_t
+#include <sys/mman.h>
+#include <time.h>
 
 
-typedef struct {
-   char nome[32];
-   uint32_t bloco_inicial;
-   uint32_t tamanho;  // Tamanho real do arquivo (em bytes)
-   uint8_t usado;
-} Diretorio;
 
-Diretorio diretorios[MAX_ARQUIVOS];
+SistemaArquivo sist;
+FILE* disco;
 
-void inicializarSistemaArquivos() {
-    FILE *disco = fopen(CAMINHO_DISCO, "rb+");
+#define HUGE_PAGE_SIZE (2 * 1024 * 1024) // 2 MB
+
+// no inicio do arquivo sist estao os metadados dele, com isso eh possivel manter as informacoes do sistema de arquivos
+
+void salvar_metadados() {
+    // funcao p salvar os metadados no arquivo sist  
+    fseek(disco, 0, SEEK_SET); 
+    fwrite(&sist, sizeof(SistemaArquivo), 1, disco); 
+}
+
+void carregar_metadados() {
+    // funcao p ler os metadados no inicio do arquivo sist
+    fseek(disco, 0, SEEK_SET); 
+    fread(&sist, sizeof(SistemaArquivo), 1, disco); 
+}
+
+void inicializar_disco() {
+    // funcao para ser rodada no incio da main toda vez, para carregar ou criar o disco e o sistema de arquivos
+    disco = fopen("Sist", "rb+"); // Tenta abrir o disco em modo leitura/escrita
+    
     if (!disco) {
-        perror("Erro ao abrir o disco virtual");
-        exit(1);
+        // Se o disco não existe, cria um novo
+        printf("Criando disco.\n");
+        disco = fopen("Sist", "wb+");
+        if (!disco) {
+            perror("Erro ao criar o disco");
+            return;
+        }
+
+        // Inicializa o sistema de arquivos
+        sist.file_count = 0;
+        // aq salva o espaco dos metadados
+        sist.free_space = DISK_SIZE - sizeof(SistemaArquivo);
+        salvar_metadados(); 
+
+        // Preenche o restante do disco com zeros
+        char zero = 0;
+        for (long i = sizeof(SistemaArquivo); i < DISK_SIZE; i++) {
+            fwrite(&zero, 1, 1, disco);
+        }
+    } else {
+        carregar_metadados();
+    }
+    fechar_disco();
+}
+
+    // funcao p salvar os metadados e fechar o arquivo
+void fechar_disco() {
+    salvar_metadados(); // Salva os metadados antes de fechar o disco
+    fclose(disco);
+}
+
+void criar_arquivo(const char* name, int num_numbers) {
+    /*
+
+    Cria um arquivo com nome "nome" (pode ser limitado o tamanho do nome) com uma lista aleatória de números 
+    inteiros positivos de 32 bits. O argumento "tam" indica a quantidade de números. A lista pode ser guardada 
+    em formato binário ou como string (lista de números legíveis separados por algum separador, como vírgula ou espaço).
+    */
+    
+    disco = fopen("Sist", "rb+");
+    carregar_metadados();
+
+    if (sist.file_count >= MAX_FILES) {
+        printf("Número máximo de arquivos atingido!\n");
+        fechar_disco();
+        return;
     }
 
-    Superbloco sb;
-    memset(&sb, 0, sizeof(Superbloco));
-    sb.total_blocos = TOTAL_BLOCOS;
-    sb.tamanho_bloco = TAMANHO_BLOCO;
-    
-    // Marcar o primeiro bloco como ocupado para o superbloco
-    sb.bitmap[0] = 0x01;
-    
-    // Inicializar a Tabela de Alocação de Blocos (TAB)
-    for (int i = 0; i < TOTAL_BLOCOS; i++) {
-        sb.tabela_alocacao[i] = 0xFFFFFFFF;  // Nenhum bloco encadeado no início
+    size_t file_size = num_numbers * sizeof(int);
+    if (file_size > sist.free_space) {
+        printf("Espaço insuficiente no disco!\n");
+        fechar_disco();
+        return;
     }
 
-    // Inicializar estrutura de diretórios
-    memset(diretorios, 0, sizeof(diretorios));
-    strcpy(diretorios[0].nome, "/");
-    diretorios[0].bloco_inicial = 1;
-    diretorios[0].usado = 1;
+    // Adiciona o arquivo a tabela
+    Arquivo new_file;
+    strncpy(new_file.name, name, MAX_FILENAME);
+    new_file.size = file_size;
+    new_file.offset = DISK_SIZE - sist.free_space; // Posicao no disco
+    sist.files[sist.file_count] = new_file;
+    sist.file_count++;
+    sist.free_space -= file_size;
 
-    // Escrever o superbloco e diretórios no disco
-    fseek(disco, 0, SEEK_SET);
-    fwrite(&sb, sizeof(Superbloco), 1, disco);
-    fwrite(diretorios, sizeof(diretorios), 1, disco);
-    fflush(disco);
+    // Escreve numeros aleatorios no disco
+
+    fseek(disco, new_file.offset, SEEK_SET);
+    for (int i = 0; i < num_numbers; i++) {
+        uint32_t num = rand(); 
+        fwrite(&num, sizeof(uint32_t), 1, disco);
+    }
+
+    salvar_metadados(); 
+    printf("Arquivo '%s' criado com %d números.\n", name, num_numbers);
+    fechar_disco();
+}
+
+void apagar_arquivo(const char* name) {
+    // Apaga o arquivo com o nome passado no argumento.
+
+    disco = fopen("Sist", "rb+");
+    carregar_metadados();
+    
+    for (int i = 0; i < sist.file_count; i++) {
+        if (strcmp(sist.files[i].name, name) == 0) {
+            // Libera o espaco no disco
+            sist.free_space += sist.files[i].size;
+
+            // Remove o arquivo da tabela
+            for (int j = i; j < sist.file_count - 1; j++) {
+                sist.files[j] = sist.files[j + 1];
+            }
+            sist.file_count--;
+
+            fechar_disco();
+            printf("Arquivo '%s' apagado.\n", name);
+            return;
+        }
+    }
+    
+    printf("Arquivo '%s' nao encontrado.\n", name);
+    fechar_disco();
+}
+
+void listar() {
+    // Lista os arquivos no diretório. Deve mostrar, ao lado de cada arquivo, o seu tamanho em bytes. Ao final, deve mostrar também o espaço total
+    //  do "disco" e o espaço disponível.
+  
+    disco = fopen("Sist", "rb+");
+    carregar_metadados();
+    printf("Arquivos no diretório:\n");
+    for (int i = 0; i < sist.file_count; i++) {
+        printf("- %s (%zu bytes)\n", sist.files[i].name, sist.files[i].size);
+    }
+    printf("Espaço total: %d bytes\n", DISK_SIZE);
+    printf("Espaço disponível: %ld bytes\n", sist.free_space);
+    fechar_disco();
+}
+
+void ler_arquivo(const char* name, int start, int end) {
+    // Exibe a sublista de um arquivo com o nome passado com o argumento. O intervalo da lista é dado pelos argumentos inicio e fim.
+    
+    disco = fopen("Sist", "rb+");
+    carregar_metadados();
+
+    for (int i = 0; i < sist.file_count; i++) {
+        if (strcmp(sist.files[i].name, name) == 0) {
+            if (start < 0 || end > sist.files[i].size / sizeof(int)) {
+                printf("Intervalo inválido!\n");
+                fechar_disco();
+                return;
+            }
+            // faz a busca em disco 
+            fseek(disco, sist.files[i].offset + start * sizeof(int), SEEK_SET);
+            for (int j = start; j <= end; j++) {
+                int num;
+                fread(&num, sizeof(int), 1, disco);
+                printf("%d ", num);
+            }
+            printf("\n");
+            fechar_disco();
+            return;
+        }
+    }
+    printf("Arquivo '%s' não encontrado.\n", name);
+    fechar_disco();
+}
+
+void concatenar_arquivos(const char* nome1, const char* nome2) {
+    /*
+    Concatena dois arquivos com os nomes dados de argumento.
+     O arquivo concatenado pode ter um novo nome predeterminado ou simplesmente pode assumir o nome do primeiro arquivo. 
+     Os arquivos originais devem deixar de existir.
+    */
+    
+    disco = fopen("Sist", "rb+");
+    carregar_metadados();
+
+    long int tamDados1 = 0, tamDados2 = 0;
+
+    for (int i = 0; i < sist.file_count; i++) {
+        if (strcmp(nome1, sist.files[i].name) == 0) {
+            tamDados1 = sist.files[i].size / sizeof(int);
+        } else if (strcmp(nome2, sist.files[i].name) == 0) {
+            tamDados2 = sist.files[i].size / sizeof(int);
+        }
+        if (tamDados1 != 0 && tamDados2 != 0) {
+            break;
+        }
+    }
+
+    if (tamDados1 == 0 || tamDados2 == 0) {
+        printf("Erro: Um ou ambos os arquivos não foram encontrados.\n");
+        fechar_disco();
+        return;
+    }
+
+    // Alocar memória dinamicamente para os dados
+    int* dados1 = malloc(tamDados1 * sizeof(int));
+    int* dados2 = malloc(tamDados2 * sizeof(int));
+
+    if (dados1 == NULL || dados2 == NULL) {
+        printf("Erro: Falha ao alocar memória.\n");
+        free(dados1);
+        free(dados2);
+        fechar_disco();
+        return;
+    }
+
+    // Ler os dados de nome1
+    for (int i = 0; i < sist.file_count; i++) {
+        if (strcmp(sist.files[i].name, nome1) == 0) {
+            fseek(disco, sist.files[i].offset, SEEK_SET);
+            fread(dados1, sizeof(int), tamDados1, disco);
+            break;
+        }
+    }
+
+    // Ler os dados de nome2
+    for (int i = 0; i < sist.file_count; i++) {
+        if (strcmp(sist.files[i].name, nome2) == 0) {
+            fseek(disco, sist.files[i].offset, SEEK_SET);
+            fread(dados2, sizeof(int), tamDados2, disco);
+            break;
+        }
+    }
+
+    fechar_disco();
+
+    char novo_nome[MAX_FILENAME];
+    snprintf(novo_nome, MAX_FILENAME, "%s+", nome1);
+    criar_arquivo(novo_nome, tamDados1 + tamDados2);
+    apagar_arquivo(nome1);
+    apagar_arquivo(nome2);
+
+    disco = fopen("Sist", "rb+");
+    carregar_metadados();
+
+    // escrever os dados no novo arquivo  
+    for (int i = 0; i < sist.file_count; i++) {
+        if (strcmp(sist.files[i].name, novo_nome) == 0) {
+            fseek(disco, sist.files[i].offset, SEEK_SET);
+            fwrite(dados1, sizeof(int), tamDados1, disco);
+            fwrite(dados2, sizeof(int), tamDados2, disco); 
+            break;
+        }
+    }
+
+    fechar_disco();
+    free(dados1);
+    free(dados2);
+    printf("Arquivos '%s' e '%s' concatenados com sucesso em '%s'.\n", nome1, nome2, novo_nome);
+}
+
+
+// Função de comparação para o qsort
+int comparar(const void* a, const void* b) {
+    return (*(int*)a - *(int*)b);
+}
+
+
+void ordenar_arquivos_pequenos(const char* nome) {
+    clock_t inicio = clock();
+    disco = fopen("Sist", "rb+");
+    carregar_metadados();
+
+    long int tamDados = 0;
+    long int offset = 0;
+
+    for (int i = 0; i < sist.file_count; i++) {
+        if (strcmp(nome, sist.files[i].name) == 0) {
+            tamDados = sist.files[i].size / sizeof(int);
+            offset = sist.files[i].offset;
+            break;
+        }
+    }
+
+    if (tamDados == 0) {
+        printf("Erro: O arquivo '%s' não foi encontrado.\n", nome);
+        fclose(disco);
+        return;
+    }
+
+    void* huge_page = mmap(NULL, HUGE_PAGE_SIZE, PROT_READ | PROT_WRITE,
+                           MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB, -1, 0);
+    if (huge_page == MAP_FAILED) {
+        perror("Erro ao alocar Huge Page");
+        fclose(disco);
+        return;
+    }
+
+    // Calcular o número de páginas necessárias
+    long int num_paginas = (tamDados * sizeof(int) / HUGE_PAGE_SIZE) + 1;
+
+    // Processar cada página
+    for (long int pagina = 0; pagina < num_paginas; pagina++) {
+        // Calcular o tamanho da página atual
+        long int tamanho_pagina = (pagina == num_paginas - 1)
+                                  ? (tamDados * sizeof(int)) % HUGE_PAGE_SIZE
+                                  : HUGE_PAGE_SIZE;
+        tamanho_pagina /= sizeof(int); // Converter para número de inteiros
+
+        // Ler a página do arquivo original
+        fseek(disco, offset + pagina * HUGE_PAGE_SIZE, SEEK_SET);
+        fread(huge_page, sizeof(int), tamanho_pagina, disco);
+
+        // Ordenar a página
+        qsort(huge_page, tamanho_pagina, sizeof(int), comparar);
+
+        // Escrever a página ordenada de volta no arquivo original
+        fseek(disco, offset + pagina * HUGE_PAGE_SIZE, SEEK_SET);
+        fwrite(huge_page, sizeof(int), tamanho_pagina, disco);
+    }
+
+    // Liberar a Huge Page
+    munmap(huge_page, HUGE_PAGE_SIZE);
+
+    // Fechar o disco
     fclose(disco);
 
-    printf("Sistema de arquivos inicializado em %s\n", CAMINHO_DISCO);
+    clock_t fim = clock();
+    double tempo_gasto = ((double)(fim - inicio)) / (CLOCKS_PER_SEC / 1000); // Tempo em ms
+    printf("Arquivo '%s' ordenado com sucesso.\n", nome);
+    printf("Tempo gasto: %.2f ms\n", tempo_gasto);
 }
 
-void criarDisco() {
-   char comando[512];
+void ordenar_arquivos_grandes(const char* nome) {
+    clock_t inicio = clock();
+    FILE* disco = fopen("Sist", "rb+");
+    carregar_metadados();
 
-   // Criar o arquivo do disco virtual
-   snprintf(comando, sizeof(comando), "dd if=/dev/zero of=%s bs=1M count=%d", CAMINHO_DISCO, TAMANHO_DISCO_MB);
-   system(comando);
+    long int tamDados = 0;
+    long int offset = 0;
 
-   // Ajustar permissões para garantir que o usuário atual tenha permissão de escrita
-   snprintf(comando, sizeof(comando), "sudo chown $USER:$USER %s", CAMINHO_DISCO);
-   system(comando);
-
-   snprintf(comando, sizeof(comando), "chmod 666 %s", CAMINHO_DISCO);  // Permitir leitura e escrita para o usuário atual
-   system(comando);
-
-   // Inicializar sistema de arquivos próprio
-   inicializarSistemaArquivos();
-   
-   printf("Disco criado e sistema de arquivos inicializado.\n");
-}
-
-void excluirDisco(){
-   char comando[512];
-   snprintf(comando, sizeof(comando), "rm -f %s", CAMINHO_DISCO);
-   system(comando);
-   printf("Disco desmontado e excluído.\n");
-
-}
-
-
-void criarArquivo(char nome[20], int tam){
-   FILE *disco = fopen(CAMINHO_DISCO, "rb+");
-   if (!disco){
-      perror("Erro ao abrir o disco virtual\n");
-      return;
-   }
-
-   Superbloco sb;
-   fseek(disco, 0, SEEK_SET);
-   fread(&sb, sizeof(Superbloco), 1, disco);
-
-   //checar se ja tem um cara com esse nome no diretorio
-   for (int i = 0; i < MAX_ARQUIVOS; i++) {
-      if (diretorios[i].usado && strcmp(diretorios[i].nome, nome) == 0) {
-          printf("Erro: Já existe um arquivo com o nome '%s'.\n", nome);
-          fclose(disco);
-          return;
-      }
-  }  
-
-   // cada bloco tem 4KB, entao p saber quanto um bloco ocupa precisa calcular antes
-   int blocos_necessarios = (tam*sizeof(uint32_t) + TAMANHO_BLOCO - 1)/TAMANHO_BLOCO;
-
-   // encontrar onde tem bloco livre 
-   int blocos_arquivo[blocos_necessarios];
-   int blocos_encontrados = 0;
-   for (int i =0; i <TOTAL_BLOCOS && blocos_encontrados < blocos_necessarios; i++){
-      if (!(sb.bitmap[i/8]  & (1 <<(i%8)))){
-         blocos_arquivo[blocos_encontrados++] = i;
-         sb.bitmap[i/8] |= (1<< (i%8)); //marcar no bitmap que o bloco ta ocupado 
-      }
-   }
-
-   if (blocos_encontrados<blocos_necessarios){
-      printf("Sem espaco.\n");
-      fclose(disco);
-      return;
-   }
-
-   for(int i =0; i <blocos_necessarios-1;i++){
-      sb.tabela_alocacao[blocos_arquivo[i]] = blocos_arquivo[i+1];
-   }
-   sb.tabela_alocacao[blocos_arquivo[blocos_necessarios-1]] = 0xFFFFFFFF;
-
-   fseek(disco, sizeof(Superbloco), SEEK_SET);
-   fread(diretorios, sizeof(diretorios), 1, disco);
-
-   int indice_dir = -1;
-   for (int i = 0; i < MAX_ARQUIVOS; i++) {
-       if (!diretorios[i].usado) {  // Encontrar espaço livre
-           indice_dir = i;
-           break;
-       }
-   }
-
-   if (indice_dir == -1) {
-       printf("Erro: Número máximo de arquivos atingido.\n");
-       fclose(disco);
-       return;
-   }
-   
-   strcpy(diretorios[indice_dir].nome, nome);
-   diretorios[indice_dir].bloco_inicial = blocos_arquivo[0];
-   diretorios[indice_dir].tamanho = tam*sizeof(uint32_t);
-   diretorios[indice_dir].usado = 1;
-
-   // Escrever números aleatórios nos blocos alocados
-   srandom(time(NULL));
-   int total_numeros = tam; // Escrever exatamente 'tam' números aleatórios
-   for (int i = 0; i < blocos_necessarios; i++) {
-      fseek(disco, blocos_arquivo[i] * TAMANHO_BLOCO, SEEK_SET);
-      for (int j = 0; j < TAMANHO_BLOCO / sizeof(uint32_t) && total_numeros > 0; j++) {
-         uint32_t num = (uint32_t)random();
-         printf("%u, ", num);
-         fwrite(&num, sizeof(uint32_t), 1, disco);
-         total_numeros--;
-         if (total_numeros == 0) {
-            printf("\n");
+    for (int i = 0; i < sist.file_count; i++) {
+        if (strcmp(nome, sist.files[i].name) == 0) {
+            tamDados = sist.files[i].size / sizeof(int);
+            offset = sist.files[i].offset;
             break;
-         }
-      }
-      if (total_numeros == 0) {
-         printf("\n");
-         break;
-      }
-   }
+        }
+    }
 
-   for (int i = 0; i < TOTAL_BLOCOS; i++) {
-      if (sb.tabela_alocacao[i] != 0xFFFFFFFF) {
-          printf("Bloco %d -> %d\n", i, sb.tabela_alocacao[i]);
-      }
-  }
-  
-   fseek(disco,0,SEEK_SET);
-   fwrite(&sb, sizeof(Superbloco), 1, disco);
-   fwrite(diretorios, sizeof(diretorios), 1, disco);
+    if (tamDados == 0) {
+        printf("Erro: O arquivo '%s' não foi encontrado.\n", nome);
+        fclose(disco);
+        return;
+    }
 
-   fclose(disco);
-   printf("Arquivo %s criado com sucesso!\n", nome);
+    // Alocar uma Huge Page de 2 MB
+    void* huge_page = mmap(NULL, HUGE_PAGE_SIZE, PROT_READ | PROT_WRITE,
+                           MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB, -1, 0);
+    if (huge_page == MAP_FAILED) {
+        perror("Erro ao alocar Huge Page");
+        fclose(disco);
+        return;
+    }
+
+    // Calcular o número de páginas necessárias
+    long int num_paginas = (tamDados * sizeof(int) + HUGE_PAGE_SIZE - 1) / HUGE_PAGE_SIZE;
+
+    // Primeira fase: Ordenação em blocos
+    for (long int pagina = 0; pagina < num_paginas; pagina++) {
+        long int tamanho_pagina = (pagina == num_paginas - 1)
+                                  ? (tamDados * sizeof(int)) % HUGE_PAGE_SIZE
+                                  : HUGE_PAGE_SIZE;
+        tamanho_pagina /= sizeof(int);
+
+        fseek(disco, offset + pagina * HUGE_PAGE_SIZE, SEEK_SET);
+        fread(huge_page, sizeof(int), tamanho_pagina, disco);
+
+        qsort(huge_page, tamanho_pagina, sizeof(int), comparar);
+
+        fseek(disco, offset + pagina * HUGE_PAGE_SIZE, SEEK_SET);
+        fwrite(huge_page, sizeof(int), tamanho_pagina, disco);
+    }
+
+    // Segunda fase: Merge externo para ordenação global
+    int* buffer = (int*)huge_page; // Reutilizando a Huge Page como buffer
+    int* indices = calloc(num_paginas, sizeof(int)); // Índices para cada bloco
+    int* valores = malloc(num_paginas * sizeof(int)); // Valores atuais dos blocos
+    FILE* temp_disco = fopen("Sist", "rb+");
+
+    for (long int i = 0; i < num_paginas; i++) {
+        fseek(temp_disco, offset + i * HUGE_PAGE_SIZE, SEEK_SET);
+        fread(&valores[i], sizeof(int), 1, temp_disco);
+    }
+
+    for (long int i = 0; i < tamDados; i++) {
+        int menor = 2147483647, menor_idx = -1;
+        for (long int j = 0; j < num_paginas; j++) {
+            if (indices[j] * sizeof(int) < HUGE_PAGE_SIZE && valores[j] < menor) {
+                menor = valores[j];
+                menor_idx = j;
+            }
+        }
+
+        buffer[i % (HUGE_PAGE_SIZE / sizeof(int))] = menor;
+        indices[menor_idx]++;
+
+        if (indices[menor_idx] * sizeof(int) < HUGE_PAGE_SIZE) {
+            fread(&valores[menor_idx], sizeof(int), 1, temp_disco);
+        }
+
+        if (i % (HUGE_PAGE_SIZE / sizeof(int)) == 0 || i == tamDados - 1) {
+            fseek(disco, offset + (i / (HUGE_PAGE_SIZE / sizeof(int))) * HUGE_PAGE_SIZE, SEEK_SET);
+            fwrite(buffer, sizeof(int), (i % (HUGE_PAGE_SIZE / sizeof(int))) + 1, disco);
+        }
+    }
+
+    // Limpeza
+    fclose(temp_disco);
+    fclose(disco);
+    free(indices);
+    free(valores);
+    munmap(huge_page, HUGE_PAGE_SIZE);
+
+    clock_t fim = clock();
+    double tempo_gasto = ((double)(fim - inicio)) / (CLOCKS_PER_SEC / 1000);
+    printf("Arquivo '%s' ordenado com sucesso.\n", nome);
+    printf("Tempo gasto: %.2f ms\n", tempo_gasto);
 }
 
-void apagarArquivo(char nome[20]){
-   FILE *disco = fopen(CAMINHO_DISCO, "rb+");
-   if (!disco){
-      perror("Erro ao abrir o disco virtual\n");
-      return;
-   }
-
-   Superbloco sb;
-   fseek(disco, 0, SEEK_SET);
-   fread(&sb, sizeof(Superbloco), 1, disco);
-
-   fseek(disco, sizeof(Superbloco), SEEK_SET);
-   fread(diretorios, sizeof(diretorios), 1, disco);
-
-   // encontrar o arquivo no diretorio 
-
-   int indice_dir = -1;
-   for (int i =0; i<MAX_ARQUIVOS; i++){
-      if (diretorios[i].usado && strcmp(diretorios[i].nome, nome) == 0){
-         indice_dir = i;
-         break;
-      }
-   }
-
-   if (indice_dir == -1){
-      printf("Arquivo %s nao encontrado.\n", nome);
-      fclose(disco);
-      return;
-   }
-   
-   uint32_t bloco_atual = diretorios[indice_dir].bloco_inicial;
-   
-   while (bloco_atual != 0xFFFFFFFF) {
-      // Liberar o bloco no bitmap
-      sb.bitmap[bloco_atual / 8] &= ~(1 << (bloco_atual % 8));
-
-      // Passar para o próximo bloco
-      uint32_t proximo_bloco = sb.tabela_alocacao[bloco_atual];
-      bloco_atual = proximo_bloco;
-  }
-   
-   diretorios[indice_dir].usado = 0;
-   // Atualizar superbloco e diretórios no disco
-   fseek(disco, 0, SEEK_SET);
-   fwrite(&sb, sizeof(Superbloco), 1, disco);
-   fwrite(diretorios, sizeof(diretorios), 1, disco);
-
-   fclose(disco);
-   printf("Arquivo %s apagado com sucesso!\n", nome);   
-}
-
-void listarDiretorio(){
-
-   FILE *disco = fopen(CAMINHO_DISCO, "rb+");
-   if (!disco){
-      perror("Erro ao abrir o disco virtual\n");
-      return;
-   }
-
-   Superbloco sb;
-   fseek(disco, 0, SEEK_SET);
-   fread(&sb, sizeof(Superbloco), 1, disco);
-
-   fseek(disco, sizeof(Superbloco), SEEK_SET);
-   fread(diretorios, sizeof(diretorios), 1, disco);
-
-   long tamanhoTotal = 0;
-
-   for (int i=0; i < MAX_ARQUIVOS; i ++){
-      if (diretorios[i].usado && strcmp(diretorios[i].nome, "/") != 0){
-         uint32_t bloco_atual = diretorios[i].bloco_inicial;
-         long tamanhoArquivo = 0;
-      
-      while (bloco_atual != 0xFFFFFFFF){
-         tamanhoArquivo += sb.tamanho_bloco;
-         uint32_t proximoBloco = sb.tabela_alocacao[bloco_atual];
-         bloco_atual = proximoBloco;
-      }
-      printf("%s: %ld bytes\n", diretorios[i].nome, tamanhoArquivo);
-      tamanhoTotal += tamanhoArquivo;
-      }
-   }
-
-   long restante = TAMANHO_DISCO_MB*1024 - tamanhoTotal;
-   printf("Total ocupado: %ld bytes\n", tamanhoTotal);
-   printf("Espaco livre de disco: %ld MB\n", restante/1024);  
-   fclose(disco);
-}
-
-void ordernarArquivo(char nome[20]){
- /* Ordena a lista no arquivo com o nome passado no argumento. O algoritmo de ordenação a ser utilizado é livre, podendo inclusive ser
-  utilizado alguma implementação de biblioteca existente. Ao terminar a ordenação, deve ser exibido o tempo gasto em ms.
- */
-}
-
-void lerArquivo(char nome[20], int inicio, int fim){
-//Exibe a sublista de um arquivo com o nome passado com o argumento. O intervalo da lista é dado pelos argumentos inicio e fim.
-   
-FILE *disco = fopen(CAMINHO_DISCO, "rb+");
-   if (!disco) {
-      perror("Erro ao abrir o disco virtual");
-      return;
-   }
-
-   Superbloco sb;
-   fseek(disco, 0, SEEK_SET);
-   fread(&sb, sizeof(Superbloco), 1, disco);
-
-   fseek(disco, sizeof(Superbloco), SEEK_SET);
-   fread(diretorios, sizeof(diretorios), 1, disco);
-   
-   int indice_dir = -1;
-   for (int i = 0; i < MAX_ARQUIVOS; i++) {
-      if (diretorios[i].usado && strcmp(diretorios[i].nome, nome) == 0) {
-         indice_dir = i;
-         break;
-      }
-   }
-
-   if (indice_dir == -1) {
-      printf("Arquivo não encontrado.\n");
-      fclose(disco);
-      return;
-   }
-
-   // Obter o número de blocos necessários
-   int bloco_atual = diretorios[indice_dir].bloco_inicial;
-   int tamanho_arquivo = diretorios[indice_dir].tamanho;
-   int blocos_necessarios = (tamanho_arquivo + TAMANHO_BLOCO - 1) / TAMANHO_BLOCO;
-
-   if (inicio < 0 || fim >= tamanho_arquivo / sizeof(uint32_t) || inicio > fim) {
-      printf("Erro nos intervalos inseridos\n");
-      fclose(disco);
-      return;
-   }
-
-   uint32_t buffer[TAMANHO_BLOCO/sizeof(uint32_t)];
-   int numValLidos = 0;
-   int indInicial = inicio/(TAMANHO_BLOCO/sizeof(uint32_t));
-   int intFinal = fim/(TAMANHO_BLOCO/sizeof(uint32_t));
-
-   while (bloco_atual != 0xFFFFFFFF){
-      printf("Lendo bloco %d...\n", bloco_atual);
-      fseek(disco, bloco_atual*TAMANHO_BLOCO, SEEK_SET);
-      fread(buffer, sizeof(uint32_t), TAMANHO_BLOCO/sizeof(uint32_t), disco);
-
-      printf("Valores lidos do bloco %d: ", bloco_atual);
-      for (int i = 0; i < TAMANHO_BLOCO/sizeof(uint32_t); i++){
-         if (numValLidos >= inicio && numValLidos <= fim){
-            printf("%u, ", buffer[i]);
-         }         
-         numValLidos++;
-         if (numValLidos >fim){
-            printf("\n");
-            fclose(disco);
-            return;
-         }
-      }
-
-      bloco_atual = sb.tabela_alocacao[bloco_atual];
-   }
-   fclose(disco);
-
-}
-
-void concaternarArquivos(char nome1[20], char nome2[20]){
- /* Concatena dois arquivos com os nomes dados de argumento. O arquivo concatenado pode ter um novo nome predeterminado ou simplesmente 
- pode assumir o nome do primeiro arquivo. Os arquivos originais devem deixar de existir.
- */
-   char caminho_completo1[256];
-   snprintf(caminho_completo1, sizeof(caminho_completo1), "%s/%s", CAMINHO_DISCO, nome1);
-   
-   char caminho_completo2[256];
-   snprintf(caminho_completo2, sizeof(caminho_completo2), "%s/%s", CAMINHO_DISCO, nome2);
-   
-   FILE *f1 = fopen(caminho_completo1, "r");
-   FILE *f2 = fopen(caminho_completo2, "r");
-
-   if (f1 == NULL || f2 == NULL) {
-       printf("Erro ao abrir os arquivos!\n");
-       return;
-   }
-
-   // Move o ponteiro do arquivo para o final pra saber o tamanho
-   fseek(f1, 0, SEEK_END);
-   long size1 = ftell(f1);
-   rewind(f1);  
-
-   fseek(f2, 0, SEEK_END);
-   long size2 = ftell(f2);
-   rewind(f2);
-
-   // Aloca memoria suficiente pra armazenar tudo
-   char *content1 = malloc(size1 + 1);
-   char *content2 = malloc(size2 + 1);
-
-   if (content1 == NULL || content2 == NULL) {
-       printf("Erro ao alocar memoria!\n");
-       fclose(f1);
-       fclose(f2);
-       return;
-   }
-
-   // Le o conteudo dos arquivos
-   fread(content1, 1, size1, f1);
-   fread(content2, 1, size2, f2);
-
-   content1[size1] = '\0';  
-   content2[size2] = '\0';  
-
-   fclose(f1);
-   fclose(f2);
-
-   // Remove os dois arquivos antes de criar o novo
-   remove(caminho_completo1);
-   remove(caminho_completo2);
-
-   // Cria um novo arquivo com o nome do primeiro
-   f1 = fopen(caminho_completo1, "w");
-   if (f1 == NULL) {
-       printf("Erro ao criar o novo arquivo!\n");
-       free(content1);
-       free(content2);
-       return;
-   }
-
-   // Escreve os conteudos concatenados
-   fprintf(f1, "%s,%s", content1, content2);
-   fclose(f1);
-
-   printf("Novo arquivo '%s' criado com sucesso!\n", nome1);
-
-   free(content1);
-   free(content2);
+void ordenar_arquivos(const char *nome){
+    disco = fopen("Sist", "rb+");
+    carregar_metadados();
+    long int tamDados = 0;
+    for (int i = 0; i < sist.file_count; i++) {
+        if (strcmp(nome, sist.files[i].name) == 0) {
+            tamDados = sist.files[i].size / sizeof(int);
+            if (tamDados<= 2097152 ){
+                fechar_disco();
+                ordenar_arquivos_pequenos(nome);
+                return;
+            }
+            else{
+                fechar_disco();
+                ordenar_arquivos_grandes(nome);
+                return;
+            }
+        }
+    }  
+    printf("Arquivo nao encontrado\n");
+    fechar_disco();
 }

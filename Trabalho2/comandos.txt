@@ -1,10 +1,2 @@
-
-dd if=/dev/zero of=Sist.img bs=1M count=1024 
-mkfs.ext2 Sist.img  
-sudo losetup /dev/loop0 Sist.img
-sudo mkdir -p /mnt/Sist  
-sudo mount /dev/loop0 /mnt/Sist
-
-sudo umount /mnt/Sist
-sudo losetup -d /dev/loop0
-rm Sist.img
+criar a hugepage:
+sudo sysctl vm.nr_hugepages=10
